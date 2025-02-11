@@ -11,80 +11,52 @@ on:
 permissions:
   contents: write
 
+
 jobs:
-  build:
-    name: Build and Package
-    runs-on: ubuntu-latest
+  release:
+    name: Release - ${{ matrix.platform.os-name }}
     strategy:
       matrix:
-        target: [ x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-pc-windows-gnu]
+        platform:
+          - os-name: FreeBSD-x86_64
+            runs-on: ubuntu-20.04
+            target: x86_64-unknown-freebsd
 
+          - os-name: Linux-x86_64
+            runs-on: ubuntu-20.04
+            target: x86_64-unknown-linux-musl
+
+          - os-name: Linux-aarch64
+            runs-on: ubuntu-20.04
+            target: aarch64-unknown-linux-musl
+
+          - os-name: Linux-riscv64
+            runs-on: ubuntu-20.04
+            target: riscv64gc-unknown-linux-gnu
+
+          - os-name: Windows-x86_64
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+
+          - os-name: macOS-x86_64
+            runs-on: macOS-latest
+            target: x86_64-apple-darwin
+
+          # more targets here ...
+
+    runs-on: ${{ matrix.platform.runs-on }}
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Cross (for cross-compilation)
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build for ${{ matrix.target }}
-        run: |
-          cross build --release --target ${{ matrix.target }}
-
-      - name: Package Binary
-        run: |
-          BIN_NAME="your_binary_name"  # Change this to your actual binary name
-          OUTPUT_DIR="release"
-          mkdir -p $OUTPUT_DIR
-
-          case "${{ matrix.target }}" in
-            *windows*)
-              ARCHIVE_NAME="${BIN_NAME}-${{ github.event.inputs.version }}-${{ matrix.target }}.zip"
-              zip -j "$OUTPUT_DIR/$ARCHIVE_NAME" "target/${{ matrix.target }}/release/$BIN_NAME.exe"
-              ;;
-            *)
-              ARCHIVE_NAME="${BIN_NAME}-${{ github.event.inputs.version }}-${{ matrix.target }}.tar.gz"
-              tar -czvf "$OUTPUT_DIR/$ARCHIVE_NAME" -C "target/${{ matrix.target }}/release" "$BIN_NAME"
-              ;;
-          esac
-
-      - name: Compute SHA-256
-        run: |
-          sha256sum release/* > release/SHA256SUMS.txt
-          cat release/SHA256SUMS.txt
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v1
         with:
-          name: release-binaries
-          path: release/*
-
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
+      - name: Publish artifacts and release
+        uses: houseabsolute/actions-rust-release@v0
         with:
-          name: release-binaries
-          path: release/
-
-      - name: Read SHA-256 Checksums
-        id: sha256
-        run: echo "sha256sum=$(cat release/SHA256SUMS.txt)" >> $GITHUB_ENV
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: Release ${{ github.event.inputs.version }}
-          body: |
-            **SHA-256 Checksums**
-            ```
-            ${{ env.sha256sum }}
-            ```
-          files: release/*
+          executable-name: mlab
+          target: ${{ matrix.platform.target }}
