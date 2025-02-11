@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "mlab-cli"
+name = "mlab"
 version = "0.1.0"
