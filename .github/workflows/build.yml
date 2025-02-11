@@ -1,0 +1,90 @@
+name: Rust Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g., v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-gnu]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Cross (for cross-compilation)
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build for ${{ matrix.target }}
+        run: |
+          cross build --release --target ${{ matrix.target }}
+
+      - name: Package Binary
+        run: |
+          BIN_NAME="your_binary_name"  # Change this to your actual binary name
+          OUTPUT_DIR="release"
+          mkdir -p $OUTPUT_DIR
+
+          case "${{ matrix.target }}" in
+            *windows*)
+              ARCHIVE_NAME="${BIN_NAME}-${{ github.event.inputs.version }}-${{ matrix.target }}.zip"
+              zip -j "$OUTPUT_DIR/$ARCHIVE_NAME" "target/${{ matrix.target }}/release/$BIN_NAME.exe"
+              ;;
+            *)
+              ARCHIVE_NAME="${BIN_NAME}-${{ github.event.inputs.version }}-${{ matrix.target }}.tar.gz"
+              tar -czvf "$OUTPUT_DIR/$ARCHIVE_NAME" -C "target/${{ matrix.target }}/release" "$BIN_NAME"
+              ;;
+          esac
+
+      - name: Compute SHA-256
+        run: |
+          sha256sum release/* > release/SHA256SUMS.txt
+          cat release/SHA256SUMS.txt
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: release/*
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: release/
+
+      - name: Read SHA-256 Checksums
+        id: sha256
+        run: echo "sha256sum=$(cat release/SHA256SUMS.txt)" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          body: |
+            **SHA-256 Checksums**
+            ```
+            ${{ env.sha256sum }}
+            ```
+          files: release/*
