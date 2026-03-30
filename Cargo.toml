@@ -1,0 +1,19 @@
+[package]
+name = "mlab"
+version = "0.1.0"
+edition = "2021"
+description = "CLI client for the mlab.sh threat intelligence API"
+
+[[bin]]
+name = "mlab"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["blocking", "multipart", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+dirs = "6"
+colored = "3"
+dialoguer = "0.11"

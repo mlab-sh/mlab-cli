@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(./target/debug/mlab --help)",
+      "Bash(./target/debug/mlab scan:*)",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1\")",
+      "Bash(curl -s -v -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/limit/domain\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/limit/ip\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/limit/file\")",
+      "Bash(./target/release/mlab limits:*)",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/domain/ssl?domain=mlab.sh\")",
+      "Bash(./target/release/mlab ssl:*)",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/scan/file/results?sha256=a1b2c3d4\")",
+      "Bash(curl -s -v -X POST -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" -F \"file=@/tmp/mlab_test.txt\" \"http://127.0.0.1:8080/upload/file\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/scan/file/results?sha256=da77be50f8b9ccb679c57256fb8bda45e55df1515d66763b83c3e3f1dd302822\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -H 'Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4' http://127.0.0.1:8080/api/v1/scan/file/results?sha256=da77be50f8b9ccb679c57256fb8bda45e55df1515d66763b83c3e3f1dd302822)",
+      "Bash(./target/release/mlab results:*)",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/scan/domain/results?domain=alice-snow.me\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/scan/ip?ip=8.8.8.8\")",
+      "Bash(curl -s -H \"Authorization: token mlab_2aca13f4c3374467badc867552fe383604690fd6481b468f9e50dd247d4\" \"http://127.0.0.1:8080/api/v1/scan/ip?ip=192.168.1.1\")",
+      "Bash(./target/release/mlab scan:*)"
+    ]
+  }
+}
