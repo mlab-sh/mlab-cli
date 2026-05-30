@@ -42,11 +42,7 @@ impl MlabClient {
             .file("file", file_path)
             .expect("Failed to read file for upload");
 
-        // File upload uses /upload/file (not under /api/v1)
-        let url = format!(
-            "{}/upload/file",
-            self.base_url.replace("/api/v1", "")
-        );
+        let url = format!("{}/upload/file", self.base_url);
 
         self.client
             .post(url)

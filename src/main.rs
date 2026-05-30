@@ -60,7 +60,7 @@ enum Commands {
 
     /// Check scan quotas
     Limits {
-        /// Limit type: domain, ip, or file (omit to show all)
+        /// Limit type: domain, ip, file, or crypto (omit to show all)
         #[arg(value_name = "TYPE")]
         scan_type: Option<String>,
 
@@ -98,6 +98,19 @@ enum ScanTarget {
     File {
         /// Path to the file
         path: String,
+    },
+    /// Lookup a cryptocurrency address
+    Crypto {
+        /// Wallet/contract address
+        address: String,
+
+        /// Blockchain (e.g. eth, btc)
+        #[arg(long, default_value = "eth")]
+        chain: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -151,6 +164,7 @@ fn main() {
                 ScanTarget::Domain { domain, no_follow, json } => commands::scan::domain(&client, domain, *no_follow, *json),
                 ScanTarget::Ip { ip, json } => commands::scan::ip(&client, ip, *json),
                 ScanTarget::File { path } => commands::scan::file(&client, path),
+                ScanTarget::Crypto { address, chain, json } => commands::scan::crypto(&client, address, chain, *json),
             }
         }
         Commands::Status { target } => {

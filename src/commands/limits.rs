@@ -9,9 +9,10 @@ struct LimitInfo {
 }
 
 const LIMITS: &[LimitInfo] = &[
-    LimitInfo { label: "Domain scans", icon: "🌐", path: "/limit/domain" },
-    LimitInfo { label: "IP lookups",   icon: "🔍", path: "/limit/ip" },
-    LimitInfo { label: "File scans",   icon: "📄", path: "/limit/file" },
+    LimitInfo { label: "Domain scans",   icon: "🌐", path: "/limit/domain" },
+    LimitInfo { label: "IP lookups",     icon: "🔍", path: "/limit/ip" },
+    LimitInfo { label: "File scans",     icon: "📄", path: "/limit/file" },
+    LimitInfo { label: "Crypto lookups", icon: "🪙", path: "/limit/crypto" },
 ];
 
 fn fetch_limit(client: &MlabClient, path: &str) -> Option<u64> {
@@ -40,7 +41,7 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
             match info {
                 Some(l) => vec![l],
                 None => {
-                    eprintln!("Unknown limit type: {t}. Use: domain, ip, or file.");
+                    eprintln!("Unknown limit type: {t}. Use: domain, ip, file, or crypto.");
                     std::process::exit(1);
                 }
             }

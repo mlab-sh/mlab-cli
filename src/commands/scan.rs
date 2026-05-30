@@ -329,6 +329,86 @@ fn country_flag(cc: &str) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  Crypto lookup
+// ═══════════════════════════════════════════════════════════════════
+
+pub fn crypto(client: &MlabClient, address: &str, chain: &str, json: bool) {
+    let path = format!(
+        "/scan/crypto?address={}&chain={}",
+        urlencode(address),
+        urlencode(chain),
+    );
+    let resp = match client.get(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Request failed: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+
+    if !status.is_success() {
+        eprintln!("{} HTTP {status}", "error:".red().bold());
+        eprintln!("{body}");
+        std::process::exit(1);
+    }
+
+    if json {
+        match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
+            Err(_) => println!("{body}"),
+        }
+        return;
+    }
+
+    let v: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            println!("{body}");
+            return;
+        }
+    };
+
+    let div = format!("  {}", "─".repeat(60));
+    println!();
+    println!("  {} Crypto Lookup  {}", "🪙", address.cyan().bold());
+    println!("{}", div.dimmed());
+    println!("  {:<14} {}", "Chain:".dimmed(), chain.to_uppercase());
+
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if k == "address" || k == "chain" {
+                continue;
+            }
+            let label = format!("{}:", k);
+            let rendered = match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Null => "—".to_string(),
+                other => serde_json::to_string(other).unwrap_or_default(),
+            };
+            println!("  {:<14} {}", label.dimmed(), rendered);
+        }
+    }
+
+    println!("{}", div.dimmed());
+    println!();
+}
+
+fn urlencode(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
+                vec![c]
+            } else {
+                format!("%{:02X}", c as u32).chars().collect::<Vec<_>>()
+            }
+        })
+        .collect()
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  File upload
 // ═══════════════════════════════════════════════════════════════════
 
