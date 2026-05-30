@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: mlab-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: mlab-linux-arm64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: mlab-darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: mlab-darwin-amd64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.name }}.tar.gz mlab
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute sha256 hashes
+        id: hashes
+        run: |
+          echo "darwin_arm64=$(sha256sum artifacts/mlab-darwin-arm64/mlab-darwin-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "darwin_amd64=$(sha256sum artifacts/mlab-darwin-amd64/mlab-darwin-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(sha256sum artifacts/mlab-linux-amd64/mlab-linux-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum artifacts/mlab-linux-arm64/mlab-linux-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Formula/mlab.rb
+        run: |
+          cat > Formula/mlab.rb << 'FORMULA'
+          class Mlab < Formula
+            desc "CLI client for the mlab.sh threat intelligence and CVE APIs"
+            homepage "https://github.com/mlab-sh/mlab-cli"
+            version "${{ steps.version.outputs.version }}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-darwin-arm64.tar.gz"
+                sha256 "${{ steps.hashes.outputs.darwin_arm64 }}"
+              else
+                url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-darwin-amd64.tar.gz"
+                sha256 "${{ steps.hashes.outputs.darwin_amd64 }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-linux-amd64.tar.gz"
+                sha256 "${{ steps.hashes.outputs.linux_amd64 }}"
+              elsif Hardware::CPU.arm?
+                url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-linux-arm64.tar.gz"
+                sha256 "${{ steps.hashes.outputs.linux_arm64 }}"
+              end
+            end
+
+            def install
+              bin.install "mlab"
+            end
+
+            test do
+              assert_match "mlab", shell_output("#{bin}/mlab --version")
+            end
+          end
+          FORMULA
+          sed -i 's/^          //' Formula/mlab.rb
+
+      - name: Push updated formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/mlab.rb
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update Homebrew formula to v${{ steps.version.outputs.version }}"
+            git push origin HEAD:main
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: v${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts/mlab-darwin-arm64/*.tar.gz
+            artifacts/mlab-darwin-amd64/*.tar.gz
+            artifacts/mlab-linux-amd64/*.tar.gz
+            artifacts/mlab-linux-arm64/*.tar.gz
