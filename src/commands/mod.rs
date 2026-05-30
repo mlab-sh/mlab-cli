@@ -5,6 +5,7 @@ pub mod status;
 pub mod results;
 pub mod ssl;
 pub mod limits;
+pub mod cve;
 
 use colored::Colorize;
 use reqwest::blocking::Response;

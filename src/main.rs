@@ -14,6 +14,10 @@ struct Cli {
     #[arg(long, global = true)]
     hostname: Option<String>,
 
+    /// Override the CVE API hostname (default: https://vuln.mlab.sh)
+    #[arg(long, global = true)]
+    cve_hostname: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -56,6 +60,12 @@ enum Commands {
         /// Output raw JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// CVE lookups (vuln.mlab.sh, no auth required)
+    Cve {
+        #[command(subcommand)]
+        action: CveAction,
     },
 
     /// Check scan quotas
@@ -108,6 +118,46 @@ enum ScanTarget {
         #[arg(long, default_value = "eth")]
         chain: String,
 
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CveAction {
+    /// Search CVEs by keyword
+    Search {
+        /// Search query
+        query: String,
+
+        /// Filter by severity (CRITICAL, HIGH, MEDIUM, LOW)
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Restrict to CVEs published on or after this date (YYYY-MM-DD)
+        #[arg(long)]
+        date_start: Option<String>,
+
+        /// Exact-match search
+        #[arg(long)]
+        exact: bool,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show details for a specific CVE
+    Detail {
+        /// CVE identifier (e.g. CVE-2024-3094)
+        id: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show CVEs from the past week
+    Latest {
         /// Output raw JSON
         #[arg(long)]
         json: bool,
@@ -183,6 +233,20 @@ fn main() {
         Commands::Ssl { domain, json } => {
             let client = make_client(&cli);
             commands::ssl::run(&client, domain, *json);
+        }
+        Commands::Cve { action } => {
+            let host = commands::cve::resolve_hostname(cli.cve_hostname.as_deref());
+            match action {
+                CveAction::Search { query, severity, date_start, exact, json } => {
+                    commands::cve::search(&host, query, severity.as_deref(), date_start.as_deref(), *exact, *json);
+                }
+                CveAction::Detail { id, json } => {
+                    commands::cve::detail(&host, id, *json);
+                }
+                CveAction::Latest { json } => {
+                    commands::cve::latest(&host, *json);
+                }
+            }
         }
         Commands::Limits { scan_type, raw } => {
             let client = make_client(&cli);
