@@ -4,6 +4,7 @@ use serde::Deserialize;
 use crate::client::MlabClient;
 use crate::commands::body;
 use crate::error::ApiError;
+use crate::ui::Spinner;
 
 struct LimitInfo {
     label: &'static str,
@@ -77,31 +78,49 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
     };
 
     let mut failure: Option<ApiError> = None;
+    // One request per scan type: a plain spinner would look stuck, so it counts.
+    let spinner = Spinner::with_steps("Checking quotas", targets.len() as u64);
+    let mut rows: Vec<(usize, String)> = Vec::new();
 
-    for limit in &targets {
-        match fetch_limit(client, limit.path) {
+    for (i, limit) in targets.iter().enumerate() {
+        let outcome = fetch_limit(client, limit.path);
+        spinner.advance();
+        match outcome {
             Ok(l) => {
-                if raw {
-                    println!("{}", l.remaining);
-                } else {
-                    println!(
-                        "  {} {:<14} {} {}",
-                        limit.icon,
-                        limit.label,
-                        print_bar(l.remaining, l.total),
-                        format!("{} / {} remaining", l.remaining, l.total).bold(),
-                    );
-                }
+                rows.push((
+                    i,
+                    if raw {
+                        l.remaining.to_string()
+                    } else {
+                        format!(
+                            "  {} {:<14} {} {}",
+                            limit.icon,
+                            limit.label,
+                            print_bar(l.remaining, l.total),
+                            format!("{} / {} remaining", l.remaining, l.total).bold(),
+                        )
+                    },
+                ));
             }
             Err(e) => {
-                if raw {
-                    println!("error");
-                } else {
-                    eprintln!("  {} {:<14} {}", limit.icon, limit.label, e.message.red());
-                }
+                rows.push((
+                    i,
+                    if raw {
+                        "error".to_string()
+                    } else {
+                        format!("  {} {:<14} {}", limit.icon, limit.label, e.message.red())
+                    },
+                ));
                 failure = Some(e);
             }
         }
+    }
+
+    // Printed only once every request is in, so the spinner never interleaves
+    // with the table it is waiting for.
+    spinner.clear();
+    for (_, row) in &rows {
+        println!("{row}");
     }
 
     // Exit with the reason for the failure (auth, quota, …), not a flat 1.

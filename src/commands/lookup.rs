@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
+use crate::ui;
 use crate::util::urlencode;
 
 pub struct Panel<'a> {
@@ -36,7 +37,14 @@ pub fn url(client: &MlabClient, target: &str, resolve: bool, json: bool) {
         // opt-in, so the flag is the user saying "yes, fetch it".
         path.push_str("&resolve=1");
     }
-    let body = fetch(client.get(&path));
+    // Resolving means the server actually fetches the target, which is the slow
+    // path — say so rather than showing the same message for both.
+    let message = if resolve {
+        format!("Analysing {target} and following redirects")
+    } else {
+        format!("Analysing {target}")
+    };
+    let body = ui::with_spinner(&message, || fetch(client.get(&path)));
     show(
         &body,
         json,
@@ -54,7 +62,9 @@ pub fn hash(client: &MlabClient, digests: &[String], json: bool) {
         return bulk_hash(client, digests, json);
     }
     let digest = &digests[0];
-    let body = fetch(client.get(&format!("/scan/hash?hash={}", urlencode(digest))));
+    let body = ui::with_spinner(&format!("Looking up {digest}"), || {
+        fetch(client.get(&format!("/scan/hash?hash={}", urlencode(digest))))
+    });
     show(
         &body,
         json,
@@ -72,7 +82,9 @@ pub fn bulk_crypto(client: &MlabClient, addresses: &[String], chain: Option<&str
     if let Some(c) = chain {
         payload["chain"] = Value::String(c.to_string());
     }
-    let body = fetch(client.post_json("/scan/crypto", &payload));
+    let body = ui::with_spinner(&format!("Looking up {} addresses", addresses.len()), || {
+        fetch(client.post_json("/scan/crypto", &payload))
+    });
     if json {
         print_json(&body);
         return;
@@ -83,7 +95,9 @@ pub fn bulk_crypto(client: &MlabClient, addresses: &[String], chain: Option<&str
 
 fn bulk_hash(client: &MlabClient, digests: &[String], json: bool) {
     let payload = serde_json::json!({ "hashes": digests });
-    let body = fetch(client.post_json("/scan/hash", &payload));
+    let body = ui::with_spinner(&format!("Looking up {} digests", digests.len()), || {
+        fetch(client.post_json("/scan/hash", &payload))
+    });
     if json {
         print_json(&body);
         return;
@@ -93,7 +107,9 @@ fn bulk_hash(client: &MlabClient, digests: &[String], json: bool) {
 }
 
 pub fn email(client: &MlabClient, address: &str, json: bool) {
-    let body = fetch(client.get(&format!("/scan/email?email={}", urlencode(address))));
+    let body = ui::with_spinner(&format!("Looking up {address}"), || {
+        fetch(client.get(&format!("/scan/email?email={}", urlencode(address))))
+    });
     show(
         &body,
         json,
@@ -107,7 +123,9 @@ pub fn email(client: &MlabClient, address: &str, json: bool) {
 }
 
 pub fn phone(client: &MlabClient, number: &str, json: bool) {
-    let body = fetch(client.get(&format!("/scan/phone?number={}", urlencode(number))));
+    let body = ui::with_spinner(&format!("Looking up {number}"), || {
+        fetch(client.get(&format!("/scan/phone?number={}", urlencode(number))))
+    });
     show(
         &body,
         json,
@@ -121,7 +139,9 @@ pub fn phone(client: &MlabClient, number: &str, json: bool) {
 }
 
 pub fn mac(client: &MlabClient, address: &str, json: bool) {
-    let body = fetch(client.get(&format!("/scan/mac?mac={}", urlencode(address))));
+    let body = ui::with_spinner(&format!("Looking up {address}"), || {
+        fetch(client.get(&format!("/scan/mac?mac={}", urlencode(address))))
+    });
     show(
         &body,
         json,
@@ -161,7 +181,13 @@ pub fn ioc(client: &MlabClient, source: &str, country: Option<&str>, risk: Optio
     }
 
     let payload = serde_json::json!({ "text": text });
-    let body = fetch(client.post_json(&path, &payload));
+    // Deep scoring leaves the process and can take a while; fast is local.
+    let message = match risk {
+        Some("deep") => "Extracting indicators — deep risk scoring",
+        Some(_) => "Extracting indicators — risk scoring",
+        None => "Extracting indicators",
+    };
+    let body = ui::with_spinner(message, || fetch(client.post_json(&path, &payload)));
 
     if json {
         print_json(&body);
@@ -194,7 +220,9 @@ pub fn bash(client: &MlabClient, source: &str, json: bool) {
         "content_b64": base64::engine::general_purpose::STANDARD.encode(&bytes),
         "filename": filename,
     });
-    let posted = fetch(client.post_json("/scan/file/bash", &payload));
+    let posted = ui::with_spinner(&format!("Analysing {filename}"), || {
+        fetch(client.post_json("/scan/file/bash", &payload))
+    });
     let posted: Value = parse_or_exit(&posted, "bash analysis");
     let sha256 = posted.get("sha256").and_then(|s| s.as_str()).unwrap_or_default();
 
@@ -203,7 +231,9 @@ pub fn bash(client: &MlabClient, source: &str, json: bool) {
     }
 
     // The POST only stores the report; the GET is what returns it.
-    let body = fetch(client.get(&format!("/scan/file/bash?sha256={}", urlencode(sha256))));
+    let body = ui::with_spinner("Fetching the report", || {
+        fetch(client.get(&format!("/scan/file/bash?sha256={}", urlencode(sha256))))
+    });
 
     if json {
         print_json(&body);
@@ -215,10 +245,13 @@ pub fn bash(client: &MlabClient, source: &str, json: bool) {
 }
 
 pub fn network(client: &MlabClient, target: &str, json: bool) {
-    let body = fetch(client.get(&format!(
-        "/scan/domain/loadnetworkrequest?url={}",
-        urlencode(target)
-    )));
+    // A real browser loads the page upstream: this is the slowest call in the CLI.
+    let body = ui::with_spinner(&format!("Loading {target} in a browser"), || {
+        fetch(client.get(&format!(
+            "/scan/domain/loadnetworkrequest?url={}",
+            urlencode(target)
+        )))
+    });
 
     if json {
         print_json(&body);

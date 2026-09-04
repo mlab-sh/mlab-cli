@@ -4,6 +4,7 @@ use serde::Deserialize;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::commands::ssl::{render_table, SslCert};
+use crate::ui;
 use crate::util::urlencode;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -85,10 +86,12 @@ struct FilesData {
 }
 
 pub fn domain(client: &MlabClient, domain: &str, json: bool) {
-    let body = fetch(client.get(&format!(
-        "/scan/domain/results?domain={}",
-        urlencode(domain)
-    )));
+    let body = ui::with_spinner(&format!("Fetching results for {domain}"), || {
+        fetch(client.get(&format!(
+            "/scan/domain/results?domain={}",
+            urlencode(domain)
+        )))
+    });
 
     if json {
         print_json(&body);
@@ -111,15 +114,8 @@ pub fn domain(client: &MlabClient, domain: &str, json: bool) {
     print_domain_ui(&r);
 
     if empty {
-        eprintln!(
-            "  {} Empty report — the scan may have failed or is still running.",
-            "warning:".yellow().bold()
-        );
-        eprintln!(
-            "  Relaunch with: {}",
-            format!("mlab scan domain {}", r.domain).dimmed()
-        );
-        eprintln!();
+        ui::warning("Empty report — the scan may have failed or is still running.");
+        ui::info(&format!("Relaunch with: mlab scan domain {}", r.domain));
     }
 }
 
@@ -344,10 +340,12 @@ pub fn file(client: &MlabClient, sha256: &str, tool: Option<&str>, json: bool) {
         return tool_output(client, sha256, tool, json);
     }
 
-    let body = fetch(client.get(&format!(
-        "/scan/file/results?sha256={}",
-        urlencode(sha256)
-    )));
+    let body = ui::with_spinner("Fetching file results", || {
+        fetch(client.get(&format!(
+            "/scan/file/results?sha256={}",
+            urlencode(sha256)
+        )))
+    });
 
     if json {
         print_json(&body);
@@ -360,11 +358,13 @@ pub fn file(client: &MlabClient, sha256: &str, tool: Option<&str>, json: bool) {
 
 /// One tool's raw output, fetched on demand — the summary deliberately omits it.
 fn tool_output(client: &MlabClient, sha256: &str, tool: &str, json: bool) {
-    let body = fetch(client.get(&format!(
-        "/scan/file/output?sha256={}&tool={}",
-        urlencode(sha256),
-        urlencode(tool)
-    )));
+    let body = ui::with_spinner(&format!("Fetching {tool} output"), || {
+        fetch(client.get(&format!(
+            "/scan/file/output?sha256={}&tool={}",
+            urlencode(sha256),
+            urlencode(tool)
+        )))
+    });
 
     if json {
         print_json(&body);

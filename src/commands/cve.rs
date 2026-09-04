@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 use crate::client::{build_http_client, retry_after};
 use crate::error::ApiError;
+use crate::ui;
 use crate::util::urlencode;
 
 #[derive(Deserialize)]
@@ -182,7 +183,7 @@ pub fn search(hostname: &str, query: &str, opts: &SearchOptions, json: bool) {
         push("limit", &v.to_string());
     }
 
-    let body = fetch(hostname, &path);
+    let body = ui::with_spinner(&format!("Searching CVEs for {query}"), || fetch(hostname, &path));
 
     if json {
         crate::commands::print_json(&body);
@@ -212,7 +213,9 @@ fn print_pagination_hint(r: &SearchResponse, opts: &SearchOptions) {
 }
 
 pub fn latest(hostname: &str, json: bool) {
-    let body = fetch(hostname, "/api/v1/cve/latest");
+    let body = ui::with_spinner("Fetching the latest CVEs", || {
+        fetch(hostname, "/api/v1/cve/latest")
+    });
 
     if json {
         crate::commands::print_json(&body);
@@ -228,7 +231,7 @@ pub fn latest(hostname: &str, json: bool) {
 
 pub fn detail(hostname: &str, cve_id: &str, json: bool) {
     let path = format!("/api/v1/cve/{}", urlencode(cve_id));
-    let body = fetch(hostname, &path);
+    let body = ui::with_spinner(&format!("Fetching {cve_id}"), || fetch(hostname, &path));
 
     if json {
         crate::commands::print_json(&body);

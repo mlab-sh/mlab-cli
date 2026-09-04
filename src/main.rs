@@ -2,6 +2,7 @@ mod client;
 mod commands;
 mod config;
 mod error;
+mod ui;
 mod util;
 
 use clap::{Parser, Subcommand};
@@ -23,6 +24,10 @@ struct Cli {
     /// Use this API key instead of the stored one (or $MLAB_API_KEY)
     #[arg(long, global = true, value_name = "KEY")]
     api_key: Option<String>,
+
+    /// Suppress spinners and progress output
+    #[arg(long, short, global = true)]
+    quiet: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -349,6 +354,7 @@ fn make_client(cli: &Cli) -> MlabClient {
 
 fn main() {
     let cli = Cli::parse();
+    ui::init(cli.quiet);
 
     match &cli.command {
         Commands::Login { key } => {

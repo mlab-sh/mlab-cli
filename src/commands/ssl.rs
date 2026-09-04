@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::ui;
 use crate::util::{days_until, urlencode};
 
 /// Certificates expiring within this many days are flagged as needing attention.
@@ -25,7 +26,9 @@ pub struct SslCert {
 }
 
 pub fn run(client: &MlabClient, domain: &str, json: bool) {
-    let body = fetch(client.get(&format!("/domain/ssl?domain={}", urlencode(domain))));
+    let body = ui::with_spinner(&format!("Fetching certificates for {domain}"), || {
+        fetch(client.get(&format!("/domain/ssl?domain={}", urlencode(domain))))
+    });
 
     if json {
         print_json(&body);

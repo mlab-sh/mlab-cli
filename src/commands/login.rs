@@ -5,6 +5,7 @@ use crate::client::MlabClient;
 use crate::commands::body;
 use crate::config::Config;
 use crate::error::{ApiError, ErrorKind};
+use crate::ui;
 
 pub fn run(hostname: &str, key: Option<&str>) {
     let api_key = match key {
@@ -49,7 +50,7 @@ pub fn run(hostname: &str, key: Option<&str>) {
 
 fn verify(hostname: &str, api_key: &str) -> String {
     let client = MlabClient::new(hostname, api_key);
-    let raw = match body(client.get("/")) {
+    let raw = match ui::with_spinner("Verifying the key", || body(client.get("/"))) {
         Ok(b) => b,
         Err(e) => e.report(),
     };

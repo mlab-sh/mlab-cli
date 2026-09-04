@@ -1287,3 +1287,97 @@ fn scan_file_follow_stops_on_a_failed_analysis() {
     // Terminal, so it must stop rather than poll until the timeout.
     assert!(stdout(&out).contains("boom"), "stdout: {}", stdout(&out));
 }
+
+// ── Progress output ───────────────────────────────────────────────────────
+// Progress belongs on stderr, and only on a terminal. These pin both, because
+// a spinner written to stdout is what made `--json` unparsable.
+
+#[test]
+fn a_followed_scan_leaves_stdout_pure_json() {
+    let server = domain_server(r#"{"status":"success"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "domain", "example.com", "--json"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out))
+        .unwrap_or_else(|e| panic!("stdout was not JSON ({e}): {:?}", stdout(&out)));
+    assert_eq!(parsed["domain"], "example.com");
+}
+
+#[test]
+fn nothing_animated_reaches_a_pipe() {
+    let server = domain_server(r#"{"status":"success"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "domain", "example.com"]);
+    let everything = format!("{}{}", stdout(&out), stderr(&out));
+
+    for artefact in ["⠋", "⠙", "⠹", "\r", "\u{1b}[2K", "\u{1b}[?25l"] {
+        assert!(
+            !everything.contains(artefact),
+            "{artefact:?} leaked into non-terminal output"
+        );
+    }
+}
+
+#[test]
+fn progress_goes_to_stderr_and_results_to_stdout() {
+    let server = domain_server(r#"{"status":"pending"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "domain", "example.com", "--no-follow"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("Scan launched"), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).is_empty(), "stdout should be empty: {:?}", stdout(&out));
+}
+
+#[test]
+fn quiet_silences_progress_but_keeps_the_result() {
+    let server = domain_server(r#"{"status":"pending"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["--quiet", "scan", "domain", "example.com", "--no-follow"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
+}
+
+#[test]
+fn quiet_still_reports_errors() {
+    // Silencing progress must not silence the reason a command failed.
+    let server = TestServer::start(|_| error(400, "Provided domain is invalid."));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["-q", "results", "domain", "nope"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(stderr(&out).contains("Provided domain is invalid."));
+}
+
+#[test]
+fn progress_can_be_switched_off_by_environment() {
+    let server = domain_server(r#"{"status":"pending"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab_env(
+        &home,
+        &["scan", "domain", "example.com", "--no-follow"],
+        &[("MLAB_NO_PROGRESS", "1")],
+    );
+
+    assert!(out.status.success());
+    assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
+}
+
+#[test]
+fn a_lookup_keeps_its_report_on_stdout() {
+    let server = TestServer::start(|_| json(r#"{"mac":"00:11:22:33:44:55","vendor":"Acme","verdict":"ok"}"#));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "mac", "00:11:22:33:44:55"]);
+
+    assert!(stdout(&out).contains("Acme"), "stdout: {}", stdout(&out));
+    assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
+}

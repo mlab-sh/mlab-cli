@@ -2,13 +2,16 @@ use colored::Colorize;
 
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::ui;
 use crate::util::urlencode;
 
 pub fn domain(client: &MlabClient, domain: &str, json: bool) {
-    let body = fetch(client.get(&format!(
-        "/scan/domain/status?domain={}",
-        urlencode(domain)
-    )));
+    let body = ui::with_spinner(&format!("Checking {domain}"), || {
+        fetch(client.get(&format!(
+            "/scan/domain/status?domain={}",
+            urlencode(domain)
+        )))
+    });
 
     if json {
         print_json(&body);

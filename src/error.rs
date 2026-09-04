@@ -73,6 +73,9 @@ impl ApiError {
     }
 
     pub fn report(&self) -> ! {
+        // A spinner may own a partially drawn line; wipe it before writing, and
+        // give the cursor back — this path exits without unwinding.
+        crate::ui::restore();
         // The status is redundant once the message says what went wrong, so it
         // is only shown when the server gave us nothing better to print.
         match self.status {

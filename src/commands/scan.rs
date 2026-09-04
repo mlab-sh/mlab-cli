@@ -1,4 +1,3 @@
-use std::io::{self, Write};
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -9,6 +8,7 @@ use serde::Deserialize;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
+use crate::ui::{self, Spinner};
 use crate::util::urlencode;
 
 /// Upper bound on how long `scan domain` follows a scan before handing the user
@@ -51,8 +51,10 @@ fn poll_domain_status(client: &MlabClient, domain: &str) -> Poll {
     }
 }
 
+/// Every polling failure ends here: the spinner is wiped by `report()` before
+/// anything is written, so the two never fight over the line.
 fn abort_polling(error: ApiError, domain: &str) -> ! {
-    clear_spinner();
+    crate::ui::restore();
     eprintln!(
         "  Check again later with: {}",
         format!("mlab results domain {domain}").dimmed()
@@ -60,73 +62,39 @@ fn abort_polling(error: ApiError, domain: &str) -> ! {
     error.report()
 }
 
-fn clear_spinner() {
-    print!("\r{}\r", " ".repeat(60));
-    io::stdout().flush().ok();
-}
-
 pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
     // 1. Launch the scan
     let payload = serde_json::json!({ "domain": domain });
-    fetch(client.post_json("/scan/domain", &payload));
+    ui::with_spinner(&format!("Launching scan for {domain}"), || {
+        fetch(client.post_json("/scan/domain", &payload))
+    });
 
     if no_follow {
-        println!(
-            "{} Scan launched for {}. Check status with: {}",
-            "ok:".green().bold(),
-            domain.cyan(),
-            format!("mlab status domain {domain}").dimmed(),
-        );
+        ui::success(&format!("Scan launched for {domain}"));
+        ui::info(&format!("Track it with: mlab status domain {domain}"));
         return;
     }
 
-    // 2. Poll status with spinner
-    println!(
-        "  {} Scanning {}...",
-        "🌐",
-        domain.cyan().bold()
-    );
-    println!();
-
-    let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let mut frame_idx = 0;
+    // 2. Follow it. Every byte of progress goes to stderr so `--json` stays a
+    // clean stream on stdout.
+    let spinner = Spinner::start(format!("Scanning {domain} — queued"));
     let start = Instant::now();
     let poll_interval = Duration::from_secs(3);
     let mut last_status = String::from("pending");
     let mut consecutive_errors = 0u32;
 
     loop {
-        let elapsed = start.elapsed();
-        let secs = elapsed.as_secs();
-        let spinner = spinner_frames[frame_idx % spinner_frames.len()];
-        frame_idx += 1;
-
-        let status_display = match last_status.as_str() {
-            "pending" => "queued".yellow(),
-            "scanning" => "scanning".cyan(),
-            "success" => "done".green(),
-            other => other.normal(),
-        };
-
-        print!(
-            "\r  {} {}  {} elapsed    ",
-            spinner.cyan(),
-            status_display,
-            format!("{secs}s").dimmed(),
-        );
-        io::stdout().flush().ok();
-
         if last_status == "success" {
             break;
         }
 
-        if elapsed >= MAX_WAIT {
+        if start.elapsed() >= MAX_WAIT {
             abort_polling(
                 ApiError::new(
                     None,
                     format!(
-                        "gave up after {}s (last status: {last_status})",
-                        elapsed.as_secs()
+                        "gave up after {} (last status: {last_status})",
+                        ui::format_elapsed(start.elapsed())
                     ),
                 ),
                 domain,
@@ -143,6 +111,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
                 if matches!(s.as_str(), "failed" | "fail" | "error") {
                     abort_polling(ApiError::new(None, format!("scan {s}")), domain);
                 }
+                spinner.set(format!("Scanning {domain} — {}", status_label(&s)));
                 last_status = s;
             }
             // 4xx means the request itself is wrong (bad key, unknown domain);
@@ -150,6 +119,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
             Poll::Fatal(e) => abort_polling(e, domain),
             Poll::Transient(msg) => {
                 consecutive_errors += 1;
+                spinner.set(format!("Scanning {domain} — retrying ({consecutive_errors}/5)"));
                 if consecutive_errors >= 5 {
                     abort_polling(
                         ApiError::new(None, format!("{msg} (5 consecutive failures)")),
@@ -160,17 +130,20 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
         }
     }
 
-    clear_spinner();
-
-    println!(
-        "  {} Scan completed in {}s",
-        "✔".green().bold(),
-        start.elapsed().as_secs()
-    );
-    println!();
+    spinner.succeed(format!("Scan of {domain} completed"));
 
     // 3. Fetch and display results
+    ui::with_spinner("Fetching results", || {});
     crate::commands::results::domain(client, domain, json);
+}
+
+fn status_label(status: &str) -> &str {
+    match status {
+        "pending" => "queued",
+        "scanning" => "scanning",
+        "success" => "done",
+        other => other,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -219,7 +192,9 @@ struct IpResult {
 }
 
 pub fn ip(client: &MlabClient, ip: &str, json: bool) {
-    let body = fetch(client.get(&format!("/scan/ip?ip={}", urlencode(ip))));
+    let body = ui::with_spinner(&format!("Looking up {ip}"), || {
+        fetch(client.get(&format!("/scan/ip?ip={}", urlencode(ip))))
+    });
 
     if json {
         print_json(&body);
@@ -381,7 +356,7 @@ pub fn crypto(client: &MlabClient, addresses: &[String], chain: Option<&str>, js
     if let Some(c) = chain {
         path.push_str(&format!("&chain={}", urlencode(c)));
     }
-    let body = fetch(client.get(&path));
+    let body = ui::with_spinner(&format!("Looking up {address}"), || fetch(client.get(&path)));
 
     if json {
         print_json(&body);
@@ -445,7 +420,10 @@ pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
         .report();
     }
 
-    let body = fetch(client.upload_file(file_path));
+    let body = ui::with_spinner(
+        &format!("Uploading {}", file_path.file_name().and_then(|n| n.to_str()).unwrap_or(path)),
+        || fetch(client.upload_file(file_path)),
+    );
 
     if json {
         print_json(&body);
@@ -490,15 +468,11 @@ pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
 /// Poll the analysis to completion, the way `scan domain` does. `partial` and
 /// `failed` are terminal too — waiting past them would never end.
 fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
-    let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let mut frame_idx = 0;
+    let spinner = Spinner::start("Analysing — queued");
     let start = Instant::now();
     let mut consecutive_errors = 0u32;
 
     loop {
-        let spinner = spinner_frames[frame_idx % spinner_frames.len()];
-        frame_idx += 1;
-
         let raw = crate::commands::body(client.get(&format!(
             "/scan/file/results?sha256={}",
             urlencode(sha256)
@@ -507,48 +481,65 @@ fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
         let status = match raw {
             Ok(b) => {
                 consecutive_errors = 0;
-                serde_json::from_str::<serde_json::Value>(&b)
-                    .ok()
-                    .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
-                    .unwrap_or_else(|| "pending".to_string())
+                let v: serde_json::Value = serde_json::from_str(&b).unwrap_or_default();
+                let status = v
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("pending")
+                    .to_string();
+                // The payload says how many tools have finished; showing it turns
+                // an opaque wait into visible progress.
+                let done = v.get("tools_done").and_then(|d| d.as_u64()).unwrap_or(0);
+                let total = v.get("tools_total").and_then(|t| t.as_u64()).unwrap_or(0);
+                if total > 0 {
+                    spinner.set(format!("Analysing — {status} ({done}/{total} tools)"));
+                } else {
+                    spinner.set(format!("Analysing — {status}"));
+                }
+                status
             }
             // 404 simply means the analysis has not produced a record yet.
             Err(e) if e.kind == ErrorKind::NotFound => "pending".to_string(),
             Err(e) if e.kind == ErrorKind::Other => {
                 consecutive_errors += 1;
                 if consecutive_errors >= 5 {
-                    clear_spinner();
+                    crate::ui::restore();
                     e.report();
                 }
+                spinner.set(format!("Analysing — retrying ({consecutive_errors}/5)"));
                 "pending".to_string()
             }
             Err(e) => {
-                clear_spinner();
+                crate::ui::restore();
                 e.report();
             }
         };
 
-        if matches!(status.as_str(), "completed" | "partial" | "failed") {
-            clear_spinner();
-            break;
+        // `partial` and `failed` are terminal too, but neither deserves a tick.
+        match status.as_str() {
+            "completed" => {
+                spinner.succeed("Analysis completed");
+                break;
+            }
+            "partial" | "failed" => {
+                spinner.warn(format!("Analysis {status}"));
+                break;
+            }
+            _ => {}
         }
 
         if start.elapsed() >= MAX_WAIT {
-            clear_spinner();
+            crate::ui::restore();
             ApiError::new(
                 None,
-                format!("gave up after {}s (last status: {status})", start.elapsed().as_secs()),
+                format!(
+                    "gave up after {} (last status: {status})",
+                    ui::format_elapsed(start.elapsed())
+                ),
             )
             .report();
         }
 
-        print!(
-            "\r  {} {}  {} elapsed    ",
-            spinner.cyan(),
-            status.cyan(),
-            format!("{}s", start.elapsed().as_secs()).dimmed()
-        );
-        io::stdout().flush().ok();
         thread::sleep(Duration::from_secs(3));
     }
 

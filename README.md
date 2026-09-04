@@ -203,8 +203,33 @@ EPSS probability, CISA KEV status, weaknesses (CWE) and references.
 | `--hostname <url>` | Override the mlab.sh API host (default `https://mlab.sh`) |
 | `--cve-hostname <url>` | Override the CVE API host (default `https://vuln.mlab.sh`) |
 | `--api-key <key>` | Use this key instead of the stored one |
+| `--quiet`, `-q` | Suppress spinners and progress output |
 
 Useful for self-hosted deployments or staging environments.
+
+## Progress output
+
+Long-running commands show a spinner with an elapsed timer, and a step counter
+where the work is countable (`mlab limits` polls four quotas, a followed file
+scan reports `3/8 tools`). A followed domain scan tracks the API's own state:
+`queued` → `scanning` → `done`.
+
+Three rules govern it:
+
+- **Progress goes to stderr, results go to stdout.** `mlab scan domain x --json |
+  jq` is a clean stream; nothing animated ever lands in it.
+- **Nothing is drawn unless stderr is a terminal.** Pipes, redirects, CI logs and
+  test harnesses get plain output with no escape sequences.
+- **Nothing is drawn for fast work.** A spinner only appears once a call has run
+  past 300 ms, so quick lookups do not flash.
+
+Turn it off with `--quiet`/`-q`, or `MLAB_NO_PROGRESS=1`. It also switches itself
+off when `CI` is set. `--quiet` silences progress only — errors still print.
+
+```bash
+mlab -q scan domain example.com --json > report.json
+MLAB_NO_PROGRESS=1 mlab limits
+```
 
 ## Exit codes
 
