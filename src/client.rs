@@ -170,3 +170,64 @@ mod tests {
         assert_eq!(c.base_url, "https://mlab.sh/api/v1");
     }
 }
+
+/// Client for the auxiliary hosts — `vuln.mlab.sh` and `actors.mlab.sh` — which
+/// share a shape that differs from the main API: no `/api/v1` prefix baked into
+/// the base URL, most routes public, and an optional bearer token (vuln's
+/// personal CI credential) rather than a required one.
+pub struct HostClient {
+    client: Client,
+    base_url: String,
+    token: Option<String>,
+}
+
+impl HostClient {
+    pub fn new(hostname: &str, token: Option<String>) -> Self {
+        Self {
+            client: build_http_client(),
+            base_url: hostname.trim_end_matches('/').to_string(),
+            token: token.filter(|t| !t.trim().is_empty()),
+        }
+    }
+
+    fn authorize(&self, req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+        match &self.token {
+            Some(t) => req.header("Authorization", format!("Bearer {t}")),
+            None => req,
+        }
+    }
+
+    pub fn get(&self, path: &str) -> Result<Response, ApiError> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut attempt = 1;
+        loop {
+            let result = self.authorize(self.client.get(&url)).send();
+            match retry_decision(result, attempt) {
+                Attempt::Done(r) => return r,
+                Attempt::RetryAfter(delay) => {
+                    thread::sleep(delay);
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// A scan is metered, so it is never replayed automatically.
+    pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response, ApiError> {
+        self.authorize(self.client.post(format!("{}{}", self.base_url, path)))
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .map_err(ApiError::transport)
+    }
+
+    /// Raw lockfile upload: the scanner accepts the file as the body and detects
+    /// the format itself, so nothing has to be parsed client-side.
+    pub fn post_raw(&self, path: &str, body: Vec<u8>) -> Result<Response, ApiError> {
+        self.authorize(self.client.post(format!("{}{}", self.base_url, path)))
+            .header("Content-Type", "application/octet-stream")
+            .body(body)
+            .send()
+            .map_err(ApiError::transport)
+    }
+}

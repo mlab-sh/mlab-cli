@@ -16,6 +16,8 @@ pub const EXIT_QUOTA: i32 = 3;
 pub const EXIT_INPUT: i32 = 4;
 pub const EXIT_MAINTENANCE: i32 = 5;
 pub const EXIT_NOT_FOUND: i32 = 6;
+/// A CI gate matched: the scan worked, and what it found is bad enough to fail.
+pub const EXIT_FINDINGS: i32 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
@@ -120,13 +122,22 @@ pub fn classify(status: Option<u16>, message: &str) -> ErrorKind {
         _ => {}
     }
 
-    let m = message.to_ascii_lowercase();
+    // Hosts spell this both ways ("No scan found", "not_found"); normalising the
+    // separators means the classifier does not have to know which.
+    let m = message.to_ascii_lowercase().replace(['_', '-'], " ");
 
     if m.contains("limit reached") || m.contains("quota") || m.contains("too many") {
         ErrorKind::Quota
     } else if m.contains("maintenance") {
         ErrorKind::Maintenance
-    } else if m.contains("unauthorized") || m.contains("api key") {
+    } else if m.contains("unauthorized")
+        || m.contains("api key")
+        || m.contains("auth required")
+        // An invalid or revoked token is an auth problem, not malformed input,
+        // so this has to be tested before the "invalid" branch below.
+        || m.contains("invalid token")
+        || m.contains("invalid api")
+    {
         ErrorKind::Auth
     } else if m.contains("no scan found") || m.contains("not found") || m.contains("no results") {
         ErrorKind::NotFound
@@ -172,6 +183,15 @@ mod tests {
             ApiError::from_response(400, r#"{"error":"No scan found for the provided domain."}"#).kind,
             ErrorKind::NotFound
         );
+    }
+
+    #[test]
+    fn machine_readable_error_codes_classify_like_their_prose_form() {
+        // actors.mlab.sh answers `{"error":"not_found"}` with a 200.
+        assert_eq!(ApiError::new(None, "not_found").kind, ErrorKind::NotFound);
+        assert_eq!(ApiError::new(None, "invalid_cve_id").kind, ErrorKind::Input);
+        assert_eq!(ApiError::new(None, "auth_required").kind, ErrorKind::Auth);
+        assert_eq!(ApiError::new(None, "invalid_token").kind, ErrorKind::Auth);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use colored::Colorize;
 use serde::Deserialize;
 
-use crate::client::{build_http_client, retry_after};
-use crate::error::ApiError;
+use crate::client::HostClient;
+use crate::commands::vuln_body;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -73,81 +73,14 @@ struct Reference {
     tags: Vec<String>,
 }
 
-fn fetch(hostname: &str, path: &str) -> String {
-    let url = format!("{}{}", hostname.trim_end_matches('/'), path);
-    let client = build_http_client();
-
-    for attempt in 1..=3u32 {
-        let resp = match client.get(&url).send() {
-            Ok(r) => r,
-            Err(e) if attempt < 3 && (e.is_timeout() || e.is_connect()) => {
-                std::thread::sleep(std::time::Duration::from_millis(300 * attempt as u64));
-                continue;
-            }
-            Err(e) => ApiError::transport(e).report(),
-        };
-
-        let status = resp.status();
-
-        // The CVE host rate-limits its heaviest route and names the delay.
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let delay = retry_after(&resp);
-            if let Some(d) = delay {
-                if attempt < 3 && d.as_secs() <= 30 {
-                    std::thread::sleep(d);
-                    continue;
-                }
-            }
-            let wait = delay.map(|d| format!(" — retry in {}s", d.as_secs())).unwrap_or_default();
-            ApiError::new(Some(429), format!("rate limited by the CVE API{wait}")).report();
-        }
-
-        let body = resp.text().unwrap_or_default();
-
-        if !status.is_success() {
-            ApiError::from_response(status.as_u16(), &body).report();
-        }
-
-        // This host reports failures inside a 200 body, so the status code is
-        // not enough to know the call succeeded.
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-            if let Some(message) = v.get("error").and_then(|e| e.as_str()) {
-                ApiError::new(None, message).report();
-            }
-        }
-
-        return body;
-    }
-
-    ApiError::new(None, "the CVE API did not answer").report()
+fn fetch(client: &HostClient, path: &str) -> String {
+    vuln_body(client.get(path))
 }
 
-fn color_severity(sev: &str) -> colored::ColoredString {
-    match sev.to_uppercase().as_str() {
-        "CRITICAL" => sev.red().bold(),
-        "HIGH" => sev.red(),
-        "MEDIUM" => sev.yellow(),
-        "LOW" => sev.green(),
-        _ => sev.normal(),
-    }
-}
-
-pub struct SearchOptions<'a> {
-    pub severity: Option<&'a str>,
-    pub date_start: Option<&'a str>,
-    pub date_end: Option<&'a str>,
-    pub vendor: Option<&'a str>,
-    pub cwe: Option<&'a str>,
-    pub min_cvss: Option<f64>,
-    pub kev_only: bool,
-    pub exact: bool,
-    pub page: u32,
-    pub limit: Option<u32>,
-}
-
-pub fn search(hostname: &str, query: &str, opts: &SearchOptions, json: bool) {
-    let mut path = format!("/api/v1/cve?q={}", urlencode(query));
-
+/// Build the filter query these routes share: search, CSV export and the RSS
+/// feed all read the same parameters server-side.
+fn filter_query(query: &str, opts: &SearchOptions) -> String {
+    let mut path = format!("?q={}", urlencode(query));
     let mut push = |key: &str, value: &str| {
         path.push_str(&format!("&{key}={}", urlencode(value)));
     };
@@ -176,14 +109,42 @@ pub fn search(hostname: &str, query: &str, opts: &SearchOptions, json: bool) {
     if opts.exact {
         push("exact", "1");
     }
+    path
+}
+
+fn color_severity(sev: &str) -> colored::ColoredString {
+    match sev.to_uppercase().as_str() {
+        "CRITICAL" => sev.red().bold(),
+        "HIGH" => sev.red(),
+        "MEDIUM" => sev.yellow(),
+        "LOW" => sev.green(),
+        _ => sev.normal(),
+    }
+}
+
+pub struct SearchOptions<'a> {
+    pub severity: Option<&'a str>,
+    pub date_start: Option<&'a str>,
+    pub date_end: Option<&'a str>,
+    pub vendor: Option<&'a str>,
+    pub cwe: Option<&'a str>,
+    pub min_cvss: Option<f64>,
+    pub kev_only: bool,
+    pub exact: bool,
+    pub page: u32,
+    pub limit: Option<u32>,
+}
+
+pub fn search(client: &HostClient, query: &str, opts: &SearchOptions, json: bool) {
+    let mut path = format!("/api/v1/cve{}", filter_query(query, opts));
     if opts.page > 0 {
-        push("page", &opts.page.to_string());
+        path.push_str(&format!("&page={}", opts.page));
     }
     if let Some(v) = opts.limit {
-        push("limit", &v.to_string());
+        path.push_str(&format!("&limit={v}"));
     }
 
-    let body = ui::with_spinner(&format!("Searching CVEs for {query}"), || fetch(hostname, &path));
+    let body = ui::with_spinner(&format!("Searching CVEs for {query}"), || fetch(client, &path));
 
     if json {
         crate::commands::print_json(&body);
@@ -212,9 +173,9 @@ fn print_pagination_hint(r: &SearchResponse, opts: &SearchOptions) {
     println!();
 }
 
-pub fn latest(hostname: &str, json: bool) {
+pub fn latest(client: &HostClient, json: bool) {
     let body = ui::with_spinner("Fetching the latest CVEs", || {
-        fetch(hostname, "/api/v1/cve/latest")
+        fetch(client, "/api/v1/cve/latest")
     });
 
     if json {
@@ -229,9 +190,9 @@ pub fn latest(hostname: &str, json: bool) {
     print_summary_list(&r.cves, r.total_results, r.start_index, r.results_per_page);
 }
 
-pub fn detail(hostname: &str, cve_id: &str, json: bool) {
+pub fn detail(client: &HostClient, cve_id: &str, json: bool) {
     let path = format!("/api/v1/cve/{}", urlencode(cve_id));
-    let body = ui::with_spinner(&format!("Fetching {cve_id}"), || fetch(hostname, &path));
+    let body = ui::with_spinner(&format!("Fetching {cve_id}"), || fetch(client, &path));
 
     if json {
         crate::commands::print_json(&body);
@@ -431,4 +392,168 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
         }
     }
     lines
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Bulk and reference routes
+// ═══════════════════════════════════════════════════════════════════
+
+/// The heaviest anonymous route on the host, and the only one with a per-IP
+/// budget: refusals come back as 429 + `Retry-After`, which the client honours.
+pub fn dump(
+    client: &HostClient,
+    date_start: Option<&str>,
+    date_end: Option<&str>,
+    min_cvss: Option<f64>,
+) {
+    let mut path = String::from("/api/v1/cve/dump?");
+    if let Some(v) = date_start {
+        path.push_str(&format!("dateStart={}&", urlencode(v)));
+    }
+    if let Some(v) = date_end {
+        path.push_str(&format!("dateEnd={}&", urlencode(v)));
+    }
+    if let Some(v) = min_cvss {
+        path.push_str(&format!("minCvss={v}&"));
+    }
+
+    let body = ui::with_spinner("Downloading the CVE dump", || fetch(client, &path));
+    // Always raw: a dump exists to be piped into a file or jq.
+    println!("{body}");
+}
+
+pub fn stats(client: &HostClient, json: bool) {
+    let body = ui::with_spinner("Fetching statistics", || fetch(client, "/api/v1/stats"));
+    if json {
+        crate::commands::print_json(&body);
+        return;
+    }
+    render_rows(&body, "📊", "CVE Statistics");
+}
+
+pub fn sources(client: &HostClient, json: bool) {
+    let body = ui::with_spinner("Fetching sources", || fetch(client, "/api/v1/sources"));
+    if json {
+        crate::commands::print_json(&body);
+        return;
+    }
+    render_rows(&body, "🗂", "Advisory Sources");
+}
+
+pub fn advisories(client: &HostClient, cve: Option<&str>, country: Option<&str>, limit: Option<u32>, json: bool) {
+    let mut path = String::from("/api/v1/advisories?");
+    if let Some(v) = cve {
+        path.push_str(&format!("cve={}&", urlencode(v)));
+    }
+    if let Some(v) = country {
+        path.push_str(&format!("country={}&", urlencode(v)));
+    }
+    if let Some(v) = limit {
+        path.push_str(&format!("limit={v}&"));
+    }
+
+    let body = ui::with_spinner("Fetching advisories", || fetch(client, &path));
+    if json {
+        crate::commands::print_json(&body);
+        return;
+    }
+
+    let v: serde_json::Value = crate::commands::parse_or_exit(&body, "advisories");
+    // Two shapes: `?cve=` answers an object, the listing answers an array.
+    let rows = v
+        .get("advisories")
+        .cloned()
+        .unwrap_or(v.clone());
+    render_value_rows(&rows, "🏛", "Advisories");
+}
+
+pub fn vendor_months(client: &HostClient, vendor: &str, year: u32, json: bool) {
+    let path = format!("/api/v1/vendor/{}/months?year={year}", urlencode(vendor));
+    let body = ui::with_spinner(&format!("Fetching {vendor} {year}"), || fetch(client, &path));
+
+    if json {
+        crate::commands::print_json(&body);
+        return;
+    }
+
+    let v: serde_json::Value = crate::commands::parse_or_exit(&body, "vendor");
+    let months = v.get("months").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    let counts: Vec<u64> = months.iter().map(|m| m.as_u64().unwrap_or(0)).collect();
+    let peak = counts.iter().copied().max().unwrap_or(0).max(1);
+
+    println!();
+    println!("  {} {} — {}", "📈", vendor.cyan().bold(), year.to_string().bold());
+    println!("{}", format!("  {}", "─".repeat(56)).dimmed());
+    for (i, count) in counts.iter().enumerate() {
+        let width = ((*count as f64 / peak as f64) * 30.0).round() as usize;
+        println!(
+            "  {:<5} {:<32} {}",
+            MONTHS.get(i).copied().unwrap_or("?"),
+            "█".repeat(width).cyan(),
+            count.to_string().bold()
+        );
+    }
+    println!("{}", format!("  {}", "─".repeat(56)).dimmed());
+    println!();
+}
+
+const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/// CSV and RSS live at the site root, NOT under `/api/v1` — the paths the Node
+/// SDK documents (`/api/v1/export/csv`, `/api/v1/rss`) do not exist.
+pub fn export(client: &HostClient, query: &str, opts: &SearchOptions, format: &str) {
+    let path = match format {
+        "rss" => format!("/rss{}", filter_query(query, opts)),
+        _ => format!("/export/csv{}", filter_query(query, opts)),
+    };
+    let body = ui::with_spinner(&format!("Exporting as {format}"), || fetch(client, &path));
+    println!("{body}");
+}
+
+fn render_rows(body: &str, icon: &str, title: &str) {
+    let v: serde_json::Value = crate::commands::parse_or_exit(body, title);
+    render_value_rows(&v, icon, title);
+}
+
+fn render_value_rows(v: &serde_json::Value, icon: &str, title: &str) {
+    println!();
+    println!("  {icon} {}", title.bold());
+    println!("{}", format!("  {}", "─".repeat(72)).dimmed());
+
+    match v {
+        serde_json::Value::Array(rows) if !rows.is_empty() => {
+            for row in rows {
+                match row {
+                    serde_json::Value::Object(fields) => {
+                        let line: Vec<String> = fields
+                            .iter()
+                            .filter(|(_, val)| !val.is_null())
+                            .map(|(k, val)| {
+                                let rendered = match val {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                };
+                                format!("{}: {}", k.dimmed(), rendered)
+                            })
+                            .collect();
+                        println!("  {}", line.join("   "));
+                    }
+                    other => println!("  {other}"),
+                }
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (k, val) in fields {
+                let rendered = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                println!("  {:<22} {}", format!("{k}:").dimmed(), rendered);
+            }
+        }
+        _ => println!("  {}", "No data.".dimmed()),
+    }
+
+    println!("{}", format!("  {}", "─".repeat(72)).dimmed());
+    println!();
 }

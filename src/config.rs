@@ -8,9 +8,12 @@ use crate::error::{ApiError, ErrorKind};
 pub const API_KEY_ENV: &str = "MLAB_API_KEY";
 pub const HOSTNAME_ENV: &str = "MLAB_HOSTNAME";
 pub const CVE_HOSTNAME_ENV: &str = "MLAB_CVE_HOSTNAME";
+pub const VULN_TOKEN_ENV: &str = "MLAB_VULN_TOKEN";
+pub const ACTORS_HOSTNAME_ENV: &str = "MLAB_ACTORS_HOSTNAME";
 
 pub const DEFAULT_HOSTNAME: &str = "https://mlab.sh";
 pub const DEFAULT_CVE_HOSTNAME: &str = "https://vuln.mlab.sh";
+pub const DEFAULT_ACTORS_HOSTNAME: &str = "https://actors.mlab.sh";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -18,8 +21,14 @@ pub struct Config {
     pub hostname: String,
     #[serde(default = "default_cve_hostname")]
     pub cve_hostname: String,
+    #[serde(default = "default_actors_hostname")]
+    pub actors_hostname: String,
     #[serde(default)]
     pub api_key: String,
+    /// Personal CI token for vuln.mlab.sh. A separate credential from `api_key`:
+    /// different service, different issuer, and it only lifts the scan quota.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub vuln_token: String,
 }
 
 fn default_hostname() -> String {
@@ -30,12 +39,18 @@ fn default_cve_hostname() -> String {
     DEFAULT_CVE_HOSTNAME.to_string()
 }
 
+fn default_actors_hostname() -> String {
+    DEFAULT_ACTORS_HOSTNAME.to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             hostname: default_hostname(),
             cve_hostname: default_cve_hostname(),
+            actors_hostname: default_actors_hostname(),
             api_key: String::new(),
+            vuln_token: String::new(),
         }
     }
 }
@@ -99,6 +114,22 @@ impl Config {
         )
     }
 
+    /// Optional: most of vuln.mlab.sh answers unauthenticated, the token only
+    /// raises the scan rate limit. Missing is not an error.
+    pub fn resolved_actors_hostname(&self, flag: Option<&str>) -> String {
+        resolve(
+            flag,
+            std::env::var(ACTORS_HOSTNAME_ENV).ok(),
+            &self.actors_hostname,
+            DEFAULT_ACTORS_HOSTNAME,
+        )
+    }
+
+    pub fn resolved_vuln_token(&self, flag: Option<&str>) -> Option<String> {
+        let token = resolve(flag, std::env::var(VULN_TOKEN_ENV).ok(), &self.vuln_token, "");
+        Some(token).filter(|t| !t.is_empty())
+    }
+
     pub fn resolved_api_key(&self, flag: Option<&str>) -> String {
         let key = resolve(flag, std::env::var(API_KEY_ENV).ok(), &self.api_key, "");
         if key.is_empty() {
@@ -142,6 +173,7 @@ mod tests {
         let c: Config = serde_yaml::from_str("api_key: mlab_abc").expect("parses");
         assert_eq!(c.hostname, DEFAULT_HOSTNAME);
         assert_eq!(c.cve_hostname, DEFAULT_CVE_HOSTNAME);
+        assert_eq!(c.actors_hostname, DEFAULT_ACTORS_HOSTNAME);
         assert_eq!(c.api_key, "mlab_abc");
     }
 
@@ -157,12 +189,22 @@ mod tests {
         let c = Config {
             hostname: "https://staging.mlab.sh".to_string(),
             cve_hostname: "https://staging-vuln.mlab.sh".to_string(),
+            actors_hostname: "https://staging-actors.mlab.sh".to_string(),
             api_key: "k".to_string(),
+            vuln_token: "t".to_string(),
         };
         let back: Config = serde_yaml::from_str(&serde_yaml::to_string(&c).unwrap()).unwrap();
         assert_eq!(back.hostname, c.hostname);
         assert_eq!(back.cve_hostname, c.cve_hostname);
         assert_eq!(back.api_key, c.api_key);
+        assert_eq!(back.vuln_token, c.vuln_token);
+    }
+
+    #[test]
+    fn a_missing_vuln_token_is_not_an_error() {
+        let c = Config::default();
+        assert_eq!(c.resolved_vuln_token(None), None);
+        assert_eq!(c.resolved_vuln_token(Some("t")), Some("t".to_string()));
     }
 
     #[test]

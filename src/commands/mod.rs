@@ -7,6 +7,8 @@ pub mod ssl;
 pub mod limits;
 pub mod lookup;
 pub mod cve;
+pub mod vuln;
+pub mod actor;
 
 use reqwest::blocking::Response;
 use serde::de::DeserializeOwned;
@@ -46,4 +48,17 @@ pub fn parse_or_exit<T: DeserializeOwned>(body: &str, what: &str) -> T {
         Ok(v) => v,
         Err(e) => ApiError::new(None, format!("unreadable {what} response: {e}")).report(),
     }
+}
+
+/// `body`, plus the quirk of the CVE host: it reports failures inside a 200 by
+/// putting an `error` key in the payload, so the status code alone would let
+/// them through as success.
+pub fn vuln_body(result: Result<Response, ApiError>) -> String {
+    let raw = fetch(result);
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(message) = v.get("error").and_then(|e| e.as_str()) {
+            ApiError::new(None, message).report();
+        }
+    }
+    raw
 }

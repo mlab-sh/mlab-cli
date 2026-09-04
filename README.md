@@ -1,8 +1,9 @@
 # mlab-cli
 
 `mlab` is the official command-line client for the [mlab.sh](https://mlab.sh)
-threat-intelligence platform and its companion CVE API at
-[vuln.mlab.sh](https://vuln.mlab.sh).
+threat-intelligence platform and its companion services: the CVE and dependency
+scanner at [vuln.mlab.sh](https://vuln.mlab.sh) and the threat-actor database at
+[actors.mlab.sh](https://actors.mlab.sh).
 
 It lets you scan domains, look up IPs, analyse files, inspect SSL certificates,
 check cryptocurrency addresses, and search the CVE database — all from a single
@@ -79,7 +80,14 @@ the file:
 | Environment | `MLAB_API_KEY=mlab_xxx mlab whoami` |
 | Config file | `~/.mlab/conf.yml` |
 
-`MLAB_HOSTNAME` and `MLAB_CVE_HOSTNAME` work the same way for the two hosts.
+`MLAB_HOSTNAME`, `MLAB_CVE_HOSTNAME` and `MLAB_ACTORS_HOSTNAME` work the same way
+for the three hosts.
+
+`vuln.mlab.sh` uses a **separate** credential: a personal CI token created from
+the web account page, supplied as `--vuln-token`, `MLAB_VULN_TOKEN`, or
+`vuln_token` in the config file. Most of that host answers unauthenticated — the
+token only lifts the per-IP scan rate limit, so CI runners behind shared egress
+IPs get their own quota.
 
 The CVE endpoints on `vuln.mlab.sh` are public and require no authentication.
 
@@ -176,6 +184,62 @@ mlab limits domain         # one scan type
 mlab limits ip --raw       # raw remaining count, easy to script
 ```
 
+### `mlab actor` — threat actor intelligence (actors.mlab.sh)
+
+```bash
+mlab actor list --origin Russia --sector Government
+mlab actor get apt28
+mlab actor by-cve CVE-2023-23397
+mlab actor stix apt28 > apt28.stix.json
+mlab actor export --format jsonl > actors.jsonl
+```
+
+Public and read-only — no credential. `list` filters on `origin`, `motivation`,
+`sector` and `updated_since`, and pages with `--limit`/`--offset` (`--country` is
+accepted as an alias for `--origin`, which is the name the API actually reads).
+`by-cve` validates the identifier locally, so a typo costs no request.
+
+The dataset comes from ETDA Threat Group Cards and MITRE ATT&CK under
+CC BY-NC-SA 4.0, and every rendered view carries that attribution.
+
+### `mlab sbom scan` — dependency scanning for CI
+
+```bash
+mlab sbom scan package-lock.json
+mlab sbom scan Cargo.lock --fail-on high
+mlab sbom scan --url https://raw.githubusercontent.com/o/r/main/go.sum
+cat requirements.txt | mlab sbom scan - --format pip
+```
+
+The lockfile is sent as-is and the format is detected server-side, so the CLI
+never has to learn a manifest format. `--fail-on critical|high|medium|low` exits
+`7` when a finding reaches that severity, which is the whole point in CI:
+
+```yaml
+- run: mlab sbom scan package-lock.json --fail-on high
+```
+
+Severity comes from the advisory's CVSS v3 vector, scored with the same formula
+the web UI uses, so the CLI fails on exactly what the site paints red.
+
+**An incomplete scan never passes the gate.** The API distinguishes "this package
+has no known vulnerabilities" from "this package could not be scanned", and
+reports upstream outages explicitly. When any of that happens, `--fail-on` exits
+non-zero with the reason instead of reporting a clean build — a scan that did not
+look is not a scan that found nothing.
+
+`--json` keeps the raw payload on stdout *and* still applies the gate.
+
+### `mlab vuln query` — one package coordinate
+
+```bash
+mlab vuln query pkg:cargo/time --version 0.1.0
+mlab vuln query npm/lodash --version 4.17.11
+```
+
+OSV-compatible lookup. An empty result is a real answer ("no known
+vulnerabilities"); an upstream outage is an error, never silence.
+
 ### `mlab cve` — CVE search (vuln.mlab.sh)
 
 ```bash
@@ -196,6 +260,24 @@ returns a fixed window.
 All `cve` commands accept `--json`. The detail view shows CVSS score & vector,
 EPSS probability, CISA KEV status, weaknesses (CWE) and references.
 
+Beyond search, the same host exposes:
+
+```bash
+mlab cve dump --date-start 2026-01-01 --min-cvss 7 > cves.json
+mlab cve export openssl --severity HIGH --format csv > openssl.csv
+mlab cve export "" --kev-only --format rss
+mlab cve stats
+mlab cve sources
+mlab cve advisories --cve CVE-2024-3094
+mlab cve vendor microsoft --year 2026
+```
+
+`dump` is the heaviest anonymous route and is rate limited per IP: a `429` with a
+short `Retry-After` is waited out, a long one is reported as a quota error.
+`export` writes to stdout — CSV lives at `/export/csv` and the feed at `/rss`,
+both at the site root (the paths the Node SDK documents under `/api/v1` do not
+exist).
+
 ## Global flags
 
 | Flag | Description |
@@ -203,6 +285,8 @@ EPSS probability, CISA KEV status, weaknesses (CWE) and references.
 | `--hostname <url>` | Override the mlab.sh API host (default `https://mlab.sh`) |
 | `--cve-hostname <url>` | Override the CVE API host (default `https://vuln.mlab.sh`) |
 | `--api-key <key>` | Use this key instead of the stored one |
+| `--vuln-token <token>` | vuln.mlab.sh CI token — raises the scan quota |
+| `--actors-hostname <url>` | Override the threat-actor API host |
 | `--quiet`, `-q` | Suppress spinners and progress output |
 
 Useful for self-hosted deployments or staging environments.
@@ -245,6 +329,7 @@ reason in the body; the CLI classifies that into a code you can branch on.
 | `4` | Invalid input (bad domain, unreadable file, unsupported type) |
 | `5` | Platform in maintenance |
 | `6` | Nothing found (no scan for that domain, unknown hash) |
+| `7` | A `--fail-on` gate matched: the scan worked and found something bad enough |
 
 ```bash
 mlab scan domain example.com || case $? in
@@ -260,7 +345,9 @@ esac
 ```yaml
 hostname: https://mlab.sh
 cve_hostname: https://vuln.mlab.sh
+actors_hostname: https://actors.mlab.sh
 api_key: <your key>
+vuln_token: <optional vuln.mlab.sh CI token>
 ```
 
 You can edit it by hand; `mlab login` rewrites it and `mlab logout` clears the

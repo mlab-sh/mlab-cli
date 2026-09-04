@@ -1381,3 +1381,556 @@ fn a_lookup_keeps_its_report_on_stdout() {
     assert!(stdout(&out).contains("Acme"), "stdout: {}", stdout(&out));
     assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
 }
+
+// ── Dependency scanning ───────────────────────────────────────────────────
+
+const CRITICAL_VECTOR: &str = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H";
+const MEDIUM_VECTOR: &str = "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N";
+
+fn scan_payload(vector: &str) -> String {
+    format!(
+        r#"{{"hash":"abc","cached":false,"count":2,"truncated":false,"outage":false,
+            "packages":[{{"ecosystem":"npm","name":"left-pad","version":"1.0.0"}},
+                        {{"ecosystem":"npm","name":"safe","version":"2.0.0"}}],
+            "results":[
+              {{"ok":true,"vulns":[{{"id":"GHSA-x","aliases":["CVE-2026-1"],
+                 "severity":[{{"type":"CVSS_V3","score":"{vector}"}}],
+                 "summary":"prototype pollution",
+                 "affected":[{{"package":{{"name":"left-pad"}},
+                   "ranges":[{{"events":[{{"introduced":"0"}},{{"fixed":"1.2.3"}}]}}]}}]}}]}},
+              {{"ok":true,"vulns":[]}}]}}"#
+    )
+}
+
+#[test]
+fn a_lockfile_is_posted_raw_so_the_server_detects_the_format() {
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("package-lock.json");
+    std::fs::write(&lockfile, r#"{"lockfileVersion":3}"#).unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap()],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.route_path(), "/api/v2/scan");
+    assert_eq!(request.method, "POST");
+    assert!(request.path.contains("filename=package-lock.json"), "path: {}", request.path);
+    assert_eq!(request.body, r#"{"lockfileVersion":3}"#);
+
+    let rendered = stdout(&out);
+    assert!(rendered.contains("left-pad"), "stdout: {rendered}");
+    assert!(rendered.contains("1.2.3"), "the fixed version should be shown: {rendered}");
+    assert!(rendered.contains("CVE-2026-1"), "stdout: {rendered}");
+}
+
+#[test]
+fn a_url_scan_lets_the_server_fetch_the_manifest() {
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", "--url", "https://x.test/Cargo.lock"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.method, "GET");
+    assert!(request.path.contains("url=https%3A%2F%2Fx.test%2FCargo.lock"), "path: {}", request.path);
+}
+
+#[test]
+fn fail_on_matches_the_severity_the_web_ui_would_paint() {
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "[[package]]").unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "high"],
+    );
+
+    // 9.8 is critical, so a `high` gate must fire.
+    assert_eq!(out.status.code(), Some(7), "stdout: {}", stdout(&out));
+    assert!(stderr(&out).contains("at or above high"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn fail_on_stays_quiet_below_its_threshold() {
+    let server = TestServer::start(|_| json(&scan_payload(MEDIUM_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "[[package]]").unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "high"],
+    );
+
+    // 5.5 is medium: reported, but it does not fail the build.
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("medium"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn an_incomplete_scan_can_never_satisfy_a_gate() {
+    // `ok:false` means "not scanned", and the API says so explicitly. Treating
+    // it as clean would turn an outage into a green build.
+    let server = TestServer::start(|_| {
+        json(
+            r#"{"hash":"abc","cached":false,"count":2,"truncated":false,"outage":true,
+                "packages":[{"name":"a"},{"name":"b"}],
+                "results":[{"ok":false,"unqueryable":true},{"ok":true,"vulns":[]}]}"#,
+        )
+    });
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "[[package]]").unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "critical"],
+    );
+
+    assert!(!out.status.success(), "an incomplete scan must not pass");
+    assert_ne!(out.status.code(), Some(7), "it is an outage, not a finding");
+    assert!(stderr(&out).contains("incomplete"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn the_gate_still_fires_in_json_mode() {
+    // A CI job asking for machine-readable output must not lose its gate.
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "[[package]]").unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(),
+          "--fail-on", "critical", "--json"],
+    );
+
+    assert_eq!(out.status.code(), Some(7));
+    serde_json::from_str::<serde_json::Value>(&stdout(&out)).expect("stdout stays valid JSON");
+}
+
+#[test]
+fn an_unknown_threshold_is_refused_before_scanning() {
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "x").unwrap();
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "spicy"],
+    );
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(server.requests().is_empty(), "nothing should be scanned");
+}
+
+#[test]
+fn a_lockfile_can_arrive_on_stdin() {
+    let server = TestServer::start(|_| json(&scan_payload(MEDIUM_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab_stdin(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", "-"],
+        "{\"lockfileVersion\":3}",
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(server.requests()[0].body, "{\"lockfileVersion\":3}");
+}
+
+#[test]
+fn a_vuln_token_is_sent_as_a_bearer_credential() {
+    let server = TestServer::start(|_| json(&scan_payload(MEDIUM_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(&lockfile, "x").unwrap();
+
+    let out = mlab_env(
+        &home,
+        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap()],
+        &[("MLAB_VULN_TOKEN", "vt_secret")],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(
+        server.requests()[0].headers.get("authorization").map(String::as_str),
+        Some("Bearer vt_secret")
+    );
+}
+
+// ── Package queries ───────────────────────────────────────────────────────
+
+#[test]
+fn a_purl_query_is_sent_as_a_package_coordinate() {
+    let server = TestServer::start(|_| json(r#"{"vulns":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "vuln", "query", "pkg:cargo/time", "--version", "0.1.0"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.route_path(), "/api/v2/query");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(body["package"]["purl"], "pkg:cargo/time");
+    assert_eq!(body["version"], "0.1.0");
+    assert!(stdout(&out).contains("No known vulnerabilities"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn an_ecosystem_and_name_pair_also_works() {
+    let server = TestServer::start(|_| json(r#"{"vulns":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "crates.io/time"]);
+
+    let body: serde_json::Value = serde_json::from_str(&server.requests()[0].body).expect("json");
+    assert_eq!(body["package"]["ecosystem"], "crates.io");
+    assert_eq!(body["package"]["name"], "time");
+}
+
+#[test]
+fn something_that_is_not_a_coordinate_is_refused_locally() {
+    let server = TestServer::start(|_| json(r#"{"vulns":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "just-a-name"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn an_upstream_outage_is_not_reported_as_a_clean_package() {
+    // 503 from the OSV proxy means "we could not look", which the API documents
+    // as something a caller must never read as "no vulnerabilities".
+    let server = TestServer::start(|_| error(503, "upstream rate limited"));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "pkg:cargo/time"]);
+
+    assert!(!out.status.success(), "stdout: {}", stdout(&out));
+    assert!(!stdout(&out).contains("No known vulnerabilities"));
+}
+
+// ── Reference routes ──────────────────────────────────────────────────────
+
+#[test]
+fn export_uses_the_paths_that_actually_exist() {
+    // The Node SDK documents /api/v1/export/csv and /api/v1/rss; neither is a
+    // route on the host. CSV lives at the site root, and so does the feed.
+    for (format, expected) in [("csv", "/export/csv"), ("rss", "/rss")] {
+        let server = TestServer::start(|_| json("id,summary\n"));
+        let home = TempHome::new("https://unused.example");
+
+        let out = mlab(
+            &home,
+            &["--cve-hostname", &server.url, "cve", "export", "openssl", "--format", format, "--severity", "HIGH"],
+        );
+
+        assert!(out.status.success(), "stderr: {}", stderr(&out));
+        let request = &server.requests()[0];
+        assert_eq!(request.route_path(), expected);
+        assert!(request.path.contains("q=openssl"), "path: {}", request.path);
+        assert!(request.path.contains("severity=HIGH"), "path: {}", request.path);
+    }
+}
+
+#[test]
+fn the_dump_forwards_its_filters_and_prints_raw() {
+    let server = TestServer::start(|_| json(r#"[{"id":"CVE-2026-1"}]"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "cve", "dump", "--date-start", "2026-01-01", "--min-cvss", "7"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let path = &server.requests()[0].path;
+    assert!(path.starts_with("/api/v1/cve/dump?"), "path: {path}");
+    assert!(path.contains("dateStart=2026-01-01"), "path: {path}");
+    assert!(path.contains("minCvss=7"), "path: {path}");
+    serde_json::from_str::<serde_json::Value>(&stdout(&out)).expect("raw JSON on stdout");
+}
+
+#[test]
+fn a_rate_limited_dump_reports_the_wait() {
+    let server = TestServer::start(|_| error(429, "slow down").header("Retry-After", "900"));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--cve-hostname", &server.url, "cve", "dump"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_QUOTA));
+    assert!(stderr(&out).contains("900"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn the_reference_routes_are_reachable() {
+    for (args, expected) in [
+        (vec!["cve", "stats"], "/api/v1/stats"),
+        (vec!["cve", "sources"], "/api/v1/sources"),
+        (vec!["cve", "advisories"], "/api/v1/advisories"),
+    ] {
+        let server = TestServer::start(|_| json(r#"[{"name":"NVD","count":3}]"#));
+        let home = TempHome::new("https://unused.example");
+
+        let mut full = vec!["--cve-hostname", &server.url];
+        full.extend(args.iter());
+        let out = mlab(&home, &full);
+
+        assert!(out.status.success(), "{args:?} → {}", stderr(&out));
+        assert_eq!(server.requests()[0].route_path(), expected, "for {args:?}");
+    }
+}
+
+#[test]
+fn vendor_months_are_charted() {
+    let server = TestServer::start(|_| {
+        json(r#"{"vendor":"microsoft","year":2026,"months":[5,0,12,3,0,0,0,0,0,0,0,1]}"#)
+    });
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "cve", "vendor", "microsoft", "--year", "2026"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/vendor/microsoft/months");
+    assert!(server.requests()[0].path.contains("year=2026"));
+    let rendered = stdout(&out);
+    assert!(rendered.contains("Mar"), "stdout: {rendered}");
+    assert!(rendered.contains("12"), "stdout: {rendered}");
+}
+
+// ── Threat actors ─────────────────────────────────────────────────────────
+
+const ACTOR_LIST: &str = r#"{"count":2,"total":2,"limit":100,"offset":0,"items":[
+  {"id":"1","slug":"apt28","primary_name":"APT28","suspected_origin":"Russia",
+   "motivation":["Information theft and espionage"],"targets_sectors":["Government"],
+   "targets_countries":["Ukraine"],"tlp":"WHITE","is_published":true},
+  {"id":"2","slug":"lazarus","primary_name":"Lazarus Group","suspected_origin":"North Korea",
+   "motivation":["Financial gain"],"targets_sectors":["Financial"],"targets_countries":[],
+   "tlp":"WHITE","is_published":true}]}"#;
+
+#[test]
+fn actor_list_filters_on_origin_not_country() {
+    // The API parameter is `origin`; sending `country` would be ignored and the
+    // user would get the unfiltered list believing it was filtered.
+    let server = TestServer::start(|_| json(ACTOR_LIST));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "list", "--origin", "Russia"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let path = &server.requests()[0].path;
+    assert!(path.starts_with("/api/v1/actors?"), "path: {path}");
+    assert!(path.contains("origin=Russia"), "path: {path}");
+    assert!(!path.contains("country="), "path: {path}");
+    assert!(stdout(&out).contains("APT28"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn country_is_accepted_as_an_alias_and_still_sends_origin() {
+    let server = TestServer::start(|_| json(ACTOR_LIST));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "list", "--country", "Russia"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(server.requests()[0].path.contains("origin=Russia"));
+}
+
+#[test]
+fn actor_list_forwards_every_documented_filter() {
+    let server = TestServer::start(|_| json(ACTOR_LIST));
+    let home = TempHome::new("https://unused.example");
+
+    mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "list",
+          "--motivation", "Financial gain", "--sector", "Financial",
+          "--updated-since", "2026-01-01T00:00:00Z", "--limit", "50", "--offset", "100"],
+    );
+
+    let path = &server.requests()[0].path;
+    for expected in ["motivation=Financial%20gain", "sector=Financial", "updated_since=2026-01-01", "limit=50", "offset=100"] {
+        assert!(path.contains(expected), "missing {expected} in {path}");
+    }
+}
+
+#[test]
+fn actor_list_says_when_more_pages_exist() {
+    let server = TestServer::start(|_| {
+        json(r#"{"count":1,"total":250,"limit":1,"offset":0,"items":[
+                 {"slug":"apt28","primary_name":"APT28","suspected_origin":"Russia","motivation":[]}]}"#)
+    });
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list"]);
+
+    assert!(stdout(&out).contains("--offset"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn actor_detail_renders_the_whole_bundle() {
+    let server = TestServer::start(|_| {
+        json(
+            r#"{"actor":{"slug":"apt28","primary_name":"APT28","description":"A long running espionage group.",
+                 "suspected_origin":"Russia","first_seen":"2004","tlp":"WHITE",
+                 "motivation":["Information theft and espionage"],"targets_sectors":["Government","Defence"],
+                 "targets_countries":["Ukraine"]},
+                "aliases":[{"alias":"Fancy Bear","source":"CrowdStrike"},{"alias":"Sofacy"}],
+                "external_refs":[{"source":"mitre","external_id":"G0007"}],
+                "references":[{"title":"ETDA card","url":"https://x.test/apt28"}],
+                "cves":["CVE-2023-23397"],
+                "tools":[{"mitre_id":"S0002","name":"Mimikatz","kind":"tool","url":"https://x.test"}],
+                "techniques":[{"mitre_id":"T1566","name":"Phishing","tactic":"Initial Access","is_sub":false}]}"#,
+        )
+    });
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "get", "apt28"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/actors/apt28");
+    let rendered = stdout(&out);
+    for expected in ["APT28", "Fancy Bear", "CVE-2023-23397", "Mimikatz", "T1566", "espionage group"] {
+        assert!(rendered.contains(expected), "missing {expected} in: {rendered}");
+    }
+}
+
+#[test]
+fn a_missing_actor_is_an_error_despite_the_200() {
+    // This host answers `{"error":"not_found"}` with a success status.
+    let server = TestServer::start(|_| json(r#"{"error":"not_found"}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "get", "nope"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_NOT_FOUND), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn actors_by_cve_uses_the_reverse_lookup_route() {
+    let server = TestServer::start(|_| {
+        json(
+            r#"{"cve_id":"CVE-2023-23397","count":1,
+                "actors":[{"slug":"apt28","primary_name":"APT28","suspected_origin":"Russia"}],
+                "vuln_url":"https://vuln.mlab.sh/cve/CVE-2023-23397"}"#,
+        )
+    });
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "by-cve", "cve-2023-23397"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    // Lower-case input is normalised before the call.
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/cves/CVE-2023-23397/actors");
+    let rendered = stdout(&out);
+    assert!(rendered.contains("APT28"), "stdout: {rendered}");
+    assert!(rendered.contains("vuln.mlab.sh"), "stdout: {rendered}");
+}
+
+#[test]
+fn a_sequence_shorter_than_the_api_accepts_is_refused() {
+    // The host's own pattern is CVE-\d{4}-\d{4,7}; a three-digit tail is a 400
+    // waiting to happen, so it never leaves the machine.
+    let server = TestServer::start(|_| json(r#"{"actors":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-2026-1"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn a_malformed_cve_never_reaches_the_network() {
+    let server = TestServer::start(|_| json(r#"{"actors":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-23-1"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(server.requests().is_empty(), "nothing should be requested");
+}
+
+#[test]
+fn no_documented_actor_is_stated_rather_than_left_blank() {
+    let server = TestServer::start(|_| json(r#"{"cve_id":"CVE-2026-0001","count":0,"actors":[]}"#));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-2026-0001"]);
+
+    assert!(out.status.success());
+    assert!(stdout(&out).contains("No actor is documented"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn actor_views_carry_the_dataset_attribution() {
+    // The data is CC BY-NC-SA 4.0; rendering it without credit breaches it.
+    let server = TestServer::start(|_| json(ACTOR_LIST));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list"]);
+
+    assert!(stdout(&out).contains("CC BY-NC-SA 4.0"), "stdout: {}", stdout(&out));
+    assert!(stdout(&out).contains("MITRE ATT&CK"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn the_stix_bundle_and_bulk_exports_come_out_raw() {
+    for (args, expected) in [
+        (vec!["actor", "stix", "apt28"], "/actors/apt28.stix.json"),
+        (vec!["actor", "export", "--format", "csv"], "/export/actors.csv"),
+        (vec!["actor", "export", "--format", "jsonl"], "/export/actors.jsonl"),
+    ] {
+        let server = TestServer::start(|_| json(r#"{"type":"bundle"}"#));
+        let home = TempHome::new("https://unused.example");
+
+        let mut full = vec!["--actors-hostname", &server.url];
+        full.extend(args.iter());
+        let out = mlab(&home, &full);
+
+        assert!(out.status.success(), "{args:?} → {}", stderr(&out));
+        assert_eq!(server.requests()[0].route_path(), expected, "for {args:?}");
+        assert_eq!(stdout(&out).trim(), r#"{"type":"bundle"}"#, "for {args:?}");
+    }
+}
+
+#[test]
+fn actor_json_output_stays_machine_readable() {
+    let server = TestServer::start(|_| json(ACTOR_LIST));
+    let home = TempHome::new("https://unused.example");
+
+    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list", "--json"]);
+
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    assert_eq!(parsed["items"][0]["slug"], "apt28");
+}

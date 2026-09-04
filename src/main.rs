@@ -1,13 +1,14 @@
 mod client;
 mod commands;
 mod config;
+mod cvss;
 mod error;
 mod ui;
 mod util;
 
 use clap::{Parser, Subcommand};
 
-use client::MlabClient;
+use client::{MlabClient, HostClient};
 use config::Config;
 
 #[derive(Parser)]
@@ -24,6 +25,14 @@ struct Cli {
     /// Use this API key instead of the stored one (or $MLAB_API_KEY)
     #[arg(long, global = true, value_name = "KEY")]
     api_key: Option<String>,
+
+    /// Override the threat-actor API hostname (default: https://actors.mlab.sh)
+    #[arg(long, global = true)]
+    actors_hostname: Option<String>,
+
+    /// Personal vuln.mlab.sh token (or $MLAB_VULN_TOKEN) — raises the scan quota
+    #[arg(long, global = true, value_name = "TOKEN")]
+    vuln_token: Option<String>,
 
     /// Suppress spinners and progress output
     #[arg(long, short, global = true)]
@@ -124,6 +133,24 @@ enum Commands {
         /// Output raw JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Scan a dependency manifest for known vulnerabilities
+    Sbom {
+        #[command(subcommand)]
+        action: SbomAction,
+    },
+
+    /// Package-scoped vulnerability queries (OSV-compatible)
+    Vuln {
+        #[command(subcommand)]
+        action: VulnAction,
+    },
+
+    /// Threat actor intelligence (actors.mlab.sh, no auth required)
+    Actor {
+        #[command(subcommand)]
+        action: ActorAction,
     },
 
     /// Check scan quotas
@@ -250,6 +277,59 @@ enum ScanTarget {
     },
 }
 
+/// The filter set `/api/v1/cve`, `/export/csv` and `/rss` all read.
+#[derive(clap::Args, Clone)]
+struct CveFilters {
+    /// Filter by severity (CRITICAL, HIGH, MEDIUM, LOW)
+    #[arg(long)]
+    severity: Option<String>,
+
+    /// Restrict to CVEs published on or after this date (YYYY-MM-DD)
+    #[arg(long)]
+    date_start: Option<String>,
+
+    /// Restrict to CVEs published on or before this date (YYYY-MM-DD)
+    #[arg(long)]
+    date_end: Option<String>,
+
+    /// Narrow to a vendor (merged into the keyword server-side)
+    #[arg(long)]
+    vendor: Option<String>,
+
+    /// Filter by weakness, e.g. CWE-79
+    #[arg(long)]
+    cwe: Option<String>,
+
+    /// Only CVEs scoring at least this CVSS value (0-10)
+    #[arg(long)]
+    min_cvss: Option<f64>,
+
+    /// Only CVEs listed in the CISA KEV catalogue
+    #[arg(long)]
+    kev_only: bool,
+
+    /// Exact-match search
+    #[arg(long)]
+    exact: bool,
+}
+
+impl CveFilters {
+    fn as_options(&self, page: u32, limit: Option<u32>) -> commands::cve::SearchOptions<'_> {
+        commands::cve::SearchOptions {
+            severity: self.severity.as_deref(),
+            date_start: self.date_start.as_deref(),
+            date_end: self.date_end.as_deref(),
+            vendor: self.vendor.as_deref(),
+            cwe: self.cwe.as_deref(),
+            min_cvss: self.min_cvss,
+            kev_only: self.kev_only,
+            exact: self.exact,
+            page,
+            limit,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum CveAction {
     /// Search CVEs by keyword
@@ -257,37 +337,8 @@ enum CveAction {
         /// Search query
         query: String,
 
-        /// Filter by severity (CRITICAL, HIGH, MEDIUM, LOW)
-        #[arg(long)]
-        severity: Option<String>,
-
-        /// Restrict to CVEs published on or after this date (YYYY-MM-DD)
-        #[arg(long)]
-        date_start: Option<String>,
-
-        /// Restrict to CVEs published on or before this date (YYYY-MM-DD)
-        #[arg(long)]
-        date_end: Option<String>,
-
-        /// Narrow to a vendor (merged into the keyword server-side)
-        #[arg(long)]
-        vendor: Option<String>,
-
-        /// Filter by weakness, e.g. CWE-79
-        #[arg(long)]
-        cwe: Option<String>,
-
-        /// Only CVEs scoring at least this CVSS value (0-10)
-        #[arg(long)]
-        min_cvss: Option<f64>,
-
-        /// Only CVEs listed in the CISA KEV catalogue
-        #[arg(long)]
-        kev_only: bool,
-
-        /// Exact-match search
-        #[arg(long)]
-        exact: bool,
+        #[command(flatten)]
+        filters: CveFilters,
 
         /// Result page, starting at 0
         #[arg(long, default_value_t = 0)]
@@ -296,6 +347,76 @@ enum CveAction {
         /// Results per page (max 100)
         #[arg(long)]
         limit: Option<u32>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export search results as CSV or an RSS feed
+    Export {
+        /// Search query
+        #[arg(default_value = "")]
+        query: String,
+
+        #[command(flatten)]
+        filters: CveFilters,
+
+        /// Output format
+        #[arg(long, default_value = "csv", value_parser = ["csv", "rss"])]
+        format: String,
+    },
+    /// Download a bulk CVE extract (rate limited per IP)
+    Dump {
+        /// Published on or after this date (YYYY-MM-DD)
+        #[arg(long)]
+        date_start: Option<String>,
+
+        /// Published on or before this date (YYYY-MM-DD)
+        #[arg(long)]
+        date_end: Option<String>,
+
+        /// Only CVEs scoring at least this CVSS value
+        #[arg(long)]
+        min_cvss: Option<f64>,
+    },
+    /// Database statistics
+    Stats {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Advisory sources being ingested
+    Sources {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// National advisories, optionally for one CVE
+    Advisories {
+        /// Restrict to a CVE identifier
+        #[arg(long)]
+        cve: Option<String>,
+
+        /// Restrict to a country code
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Maximum rows
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Per-month CVE counts for a vendor
+    Vendor {
+        /// Vendor name
+        vendor: String,
+
+        /// Year to chart
+        #[arg(long)]
+        year: u32,
 
         /// Output raw JSON
         #[arg(long)]
@@ -312,6 +433,111 @@ enum CveAction {
     },
     /// Show CVEs from the past week
     Latest {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ActorAction {
+    /// List actors
+    List {
+        /// Suspected country of origin (the API calls this `origin`)
+        #[arg(long, alias = "country")]
+        origin: Option<String>,
+
+        /// Filter by motivation, e.g. "Information theft and espionage"
+        #[arg(long)]
+        motivation: Option<String>,
+
+        /// Filter by targeted sector
+        #[arg(long)]
+        sector: Option<String>,
+
+        /// Only actors changed since this ISO timestamp
+        #[arg(long)]
+        updated_since: Option<String>,
+
+        /// Page size (max 500)
+        #[arg(long)]
+        limit: Option<u32>,
+
+        /// Page offset
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one actor by slug
+    Get {
+        /// Actor slug, e.g. apt28
+        slug: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Which actors are documented exploiting a CVE
+    ByCve {
+        /// CVE identifier
+        cve: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// STIX 2.1 bundle for one actor
+    Stix {
+        /// Actor slug
+        slug: String,
+    },
+    /// Bulk export of every actor
+    Export {
+        /// Output format
+        #[arg(long, default_value = "csv", value_parser = ["csv", "jsonl"])]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SbomAction {
+    /// Scan a lockfile (path, `-` for stdin, or --url)
+    Scan {
+        /// Lockfile to scan, or `-` to read stdin
+        path: Option<String>,
+
+        /// Scan a lockfile published at this URL instead
+        #[arg(long, conflicts_with = "path")]
+        url: Option<String>,
+
+        /// Force the manifest format instead of detecting it (npm, cargo, …)
+        #[arg(long)]
+        format: Option<String>,
+
+        /// Exit 7 when a finding reaches this severity
+        #[arg(long, value_name = "SEVERITY")]
+        fail_on: Option<String>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum VulnAction {
+    /// Look up one package coordinate (purl, or ecosystem/name)
+    Query {
+        /// e.g. pkg:cargo/time or crates.io/time
+        coordinate: String,
+
+        /// Package version
+        #[arg(long)]
+        version: Option<String>,
+
         /// Output raw JSON
         #[arg(long)]
         json: bool,
@@ -343,6 +569,20 @@ enum ResultsTarget {
         #[arg(long, value_name = "NAME")]
         tool: Option<String>,
     },
+}
+
+fn make_actors_client(cli: &Cli) -> HostClient {
+    let config = Config::load();
+    let hostname = config.resolved_actors_hostname(cli.actors_hostname.as_deref());
+    // Public, read-only host: no credential to pass.
+    HostClient::new(&hostname, None)
+}
+
+fn make_vuln_client(cli: &Cli) -> HostClient {
+    let config = Config::load();
+    let hostname = config.resolved_cve_hostname(cli.cve_hostname.as_deref());
+    let token = config.resolved_vuln_token(cli.vuln_token.as_deref());
+    HostClient::new(&hostname, token)
 }
 
 fn make_client(cli: &Cli) -> MlabClient {
@@ -412,31 +652,72 @@ fn main() {
             commands::ssl::run(&client, domain, *json);
         }
         Commands::Cve { action } => {
-            let host = Config::load().resolved_cve_hostname(cli.cve_hostname.as_deref());
+            let client = make_vuln_client(&cli);
             match action {
-                CveAction::Search {
-                    query, severity, date_start, date_end, vendor, cwe,
-                    min_cvss, kev_only, exact, page, limit, json,
-                } => {
-                    let opts = commands::cve::SearchOptions {
-                        severity: severity.as_deref(),
-                        date_start: date_start.as_deref(),
-                        date_end: date_end.as_deref(),
-                        vendor: vendor.as_deref(),
-                        cwe: cwe.as_deref(),
-                        min_cvss: *min_cvss,
-                        kev_only: *kev_only,
-                        exact: *exact,
-                        page: *page,
+                CveAction::Search { query, filters, page, limit, json } => {
+                    commands::cve::search(&client, query, &filters.as_options(*page, *limit), *json);
+                }
+                CveAction::Export { query, filters, format } => {
+                    commands::cve::export(&client, query, &filters.as_options(0, None), format);
+                }
+                CveAction::Dump { date_start, date_end, min_cvss } => {
+                    commands::cve::dump(&client, date_start.as_deref(), date_end.as_deref(), *min_cvss);
+                }
+                CveAction::Stats { json } => commands::cve::stats(&client, *json),
+                CveAction::Sources { json } => commands::cve::sources(&client, *json),
+                CveAction::Advisories { cve, country, limit, json } => {
+                    commands::cve::advisories(&client, cve.as_deref(), country.as_deref(), *limit, *json);
+                }
+                CveAction::Vendor { vendor, year, json } => {
+                    commands::cve::vendor_months(&client, vendor, *year, *json);
+                }
+                CveAction::Detail { id, json } => commands::cve::detail(&client, id, *json),
+                CveAction::Latest { json } => commands::cve::latest(&client, *json),
+            }
+        }
+        Commands::Actor { action } => {
+            let client = make_actors_client(&cli);
+            match action {
+                ActorAction::List { origin, motivation, sector, updated_since, limit, offset, json } => {
+                    let filters = commands::actor::ListFilters {
+                        origin: origin.as_deref(),
+                        motivation: motivation.as_deref(),
+                        sector: sector.as_deref(),
+                        updated_since: updated_since.as_deref(),
                         limit: *limit,
+                        offset: *offset,
                     };
-                    commands::cve::search(&host, query, &opts, *json);
+                    commands::actor::list(&client, &filters, *json);
                 }
-                CveAction::Detail { id, json } => {
-                    commands::cve::detail(&host, id, *json);
+                ActorAction::Get { slug, json } => commands::actor::get(&client, slug, *json),
+                ActorAction::ByCve { cve, json } => {
+                    let cve = commands::actor::validate_cve(cve);
+                    commands::actor::by_cve(&client, &cve, *json);
                 }
-                CveAction::Latest { json } => {
-                    commands::cve::latest(&host, *json);
+                ActorAction::Stix { slug } => commands::actor::stix(&client, slug),
+                ActorAction::Export { format } => commands::actor::export(&client, format),
+            }
+        }
+        Commands::Sbom { action } => {
+            let client = make_vuln_client(&cli);
+            match action {
+                SbomAction::Scan { path, url, format, fail_on, json } => {
+                    let opts = commands::vuln::ScanOptions {
+                        source: path.as_deref(),
+                        url: url.as_deref(),
+                        format: format.as_deref(),
+                        fail_on: fail_on.as_deref(),
+                        json: *json,
+                    };
+                    commands::vuln::scan(&client, &opts);
+                }
+            }
+        }
+        Commands::Vuln { action } => {
+            let client = make_vuln_client(&cli);
+            match action {
+                VulnAction::Query { coordinate, version, json } => {
+                    commands::vuln::query(&client, coordinate, version.as_deref(), *json);
                 }
             }
         }
