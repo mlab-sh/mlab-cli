@@ -1,6 +1,6 @@
 [package]
 name = "mlab"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "CLI client for the mlab.sh threat intelligence and CVE APIs"
 license = "Apache-2.0"
