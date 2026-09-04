@@ -81,12 +81,14 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
     // One request per scan type: a plain spinner would look stuck, so it counts.
     let spinner = Spinner::with_steps("Checking quotas", targets.len() as u64);
     let mut rows: Vec<(usize, String)> = Vec::new();
+    let mut values: Vec<Option<LimitResponse>> = Vec::new();
 
     for (i, limit) in targets.iter().enumerate() {
         let outcome = fetch_limit(client, limit.path);
         spinner.advance();
         match outcome {
             Ok(l) => {
+                values.push(Some(LimitResponse { remaining: l.remaining, total: l.total }));
                 rows.push((
                     i,
                     if raw {
@@ -103,6 +105,7 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
                 ));
             }
             Err(e) => {
+                values.push(None);
                 rows.push((
                     i,
                     if raw {
@@ -119,8 +122,24 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
     // Printed only once every request is in, so the spinner never interleaves
     // with the table it is waiting for.
     spinner.clear();
-    for (_, row) in &rows {
-        println!("{row}");
+
+    if crate::output::wants_csv() {
+        let table: Vec<Vec<String>> = targets
+            .iter()
+            .zip(values.iter())
+            .map(|(limit, value)| {
+                let scan_type = limit.path.trim_start_matches("/limit/").to_string();
+                match value {
+                    Some(l) => vec![scan_type, l.remaining.to_string(), l.total.to_string()],
+                    None => vec![scan_type, "error".to_string(), "error".to_string()],
+                }
+            })
+            .collect();
+        crate::output::csv_table(&["scan_type", "remaining", "total"], &table);
+    } else {
+        for (_, row) in &rows {
+            println!("{row}");
+        }
     }
 
     // Exit with the reason for the failure (auth, quota, …), not a flat 1.

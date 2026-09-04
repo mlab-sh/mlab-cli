@@ -9,6 +9,8 @@ pub mod lookup;
 pub mod cve;
 pub mod vuln;
 pub mod actor;
+pub mod search;
+pub mod config;
 
 use reqwest::blocking::Response;
 use serde::de::DeserializeOwned;

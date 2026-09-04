@@ -1,6 +1,7 @@
 use colored::Colorize;
 use serde::Deserialize;
 
+use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::commands::ssl::{render_table, SslCert};
@@ -93,7 +94,7 @@ pub fn domain(client: &MlabClient, domain: &str, json: bool) {
         )))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -347,7 +348,7 @@ pub fn file(client: &MlabClient, sha256: &str, tool: Option<&str>, json: bool) {
         )))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -366,7 +367,7 @@ fn tool_output(client: &MlabClient, sha256: &str, tool: &str, json: bool) {
         )))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }

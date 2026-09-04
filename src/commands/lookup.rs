@@ -12,6 +12,7 @@ use base64::Engine;
 use colored::Colorize;
 use serde_json::Value;
 
+use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
@@ -85,7 +86,7 @@ pub fn bulk_crypto(client: &MlabClient, addresses: &[String], chain: Option<&str
     let body = ui::with_spinner(&format!("Looking up {} addresses", addresses.len()), || {
         fetch(client.post_json("/scan/crypto", &payload))
     });
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -98,7 +99,7 @@ fn bulk_hash(client: &MlabClient, digests: &[String], json: bool) {
     let body = ui::with_spinner(&format!("Looking up {} digests", digests.len()), || {
         fetch(client.post_json("/scan/hash", &payload))
     });
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -189,7 +190,7 @@ pub fn ioc(client: &MlabClient, source: &str, country: Option<&str>, risk: Optio
     };
     let body = ui::with_spinner(message, || fetch(client.post_json(&path, &payload)));
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -235,7 +236,7 @@ pub fn bash(client: &MlabClient, source: &str, json: bool) {
         fetch(client.get(&format!("/scan/file/bash?sha256={}", urlencode(sha256))))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -253,7 +254,7 @@ pub fn network(client: &MlabClient, target: &str, json: bool) {
         )))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -267,7 +268,7 @@ pub fn network(client: &MlabClient, target: &str, json: bool) {
 // ═══════════════════════════════════════════════════════════════════
 
 fn show(body: &str, json: bool, panel: &Panel) {
-    if json {
+    if output::wants_json(json) {
         print_json(body);
         return;
     }

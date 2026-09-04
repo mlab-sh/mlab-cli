@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod cvss;
 mod error;
+mod output;
 mod ui;
 mod util;
 
@@ -33,6 +34,26 @@ struct Cli {
     /// Personal vuln.mlab.sh token (or $MLAB_VULN_TOKEN) — raises the scan quota
     #[arg(long, global = true, value_name = "TOKEN")]
     vuln_token: Option<String>,
+
+    /// Output format
+    #[arg(long, short, global = true, value_name = "FORMAT", value_parser = ["table", "json", "csv"])]
+    output: Option<String>,
+
+    /// Print the request that would be sent, without sending it
+    #[arg(long, global = true)]
+    dry_run: bool,
+
+    /// HTTP request timeout in seconds
+    #[arg(long, global = true, value_name = "SECONDS")]
+    timeout: Option<u64>,
+
+    /// How long to follow a running scan before giving up, in seconds
+    #[arg(long, global = true, value_name = "SECONDS")]
+    max_wait: Option<u64>,
+
+    /// Configuration profile to use (or $MLAB_PROFILE)
+    #[arg(long, global = true, value_name = "NAME")]
+    profile: Option<String>,
 
     /// Suppress spinners and progress output
     #[arg(long, short, global = true)]
@@ -152,6 +173,42 @@ enum Commands {
         #[command(subcommand)]
         action: ActorAction,
     },
+
+    /// Detect what a value is and route it to the right lookup
+    Search {
+        /// IP, domain, URL, hash, email, phone, MAC, crypto address or CVE
+        query: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Open the matching web report in a browser
+    Open {
+        /// Value to open a report for
+        query: String,
+
+        /// Print the URL instead of launching a browser
+        #[arg(long)]
+        print: bool,
+    },
+
+    /// Read or edit the configuration file
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Print a shell completion script
+    Completions {
+        /// Shell to generate for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
+    /// Print a roff man page
+    Man,
 
     /// Check scan quotas
     Limits {
@@ -440,6 +497,34 @@ enum CveAction {
 }
 
 #[derive(Subcommand)]
+enum ConfigAction {
+    /// Print the config file path
+    Path,
+    /// Show the effective configuration
+    List {
+        /// Show credentials in full instead of masked
+        #[arg(long)]
+        reveal: bool,
+    },
+    /// Print one value
+    Get {
+        /// hostname, cve_hostname, actors_hostname, api_key or vuln_token
+        key: String,
+
+        /// Show credentials in full instead of masked
+        #[arg(long)]
+        reveal: bool,
+    },
+    /// Write one value
+    Set {
+        /// hostname, cve_hostname, actors_hostname, api_key or vuln_token
+        key: String,
+        /// Value to store
+        value: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ActorAction {
     /// List actors
     List {
@@ -571,22 +656,54 @@ enum ResultsTarget {
     },
 }
 
+/// `None` when the command can emit CSV; otherwise its name, for the message.
+fn csv_unsupported(command: &Commands) -> Option<&'static str> {
+    match command {
+        Commands::Limits { .. } | Commands::Ssl { .. } => None,
+        Commands::Cve { action } => match action {
+            CveAction::Search { .. } | CveAction::Latest { .. } => None,
+            _ => Some("this cve sub-command"),
+        },
+        Commands::Actor { action } => match action {
+            ActorAction::List { .. } => None,
+            _ => Some("this actor sub-command"),
+        },
+        Commands::Sbom { action } => match action {
+            SbomAction::Scan { .. } => None,
+        },
+        Commands::Scan { .. } => Some("scan"),
+        Commands::Results { .. } => Some("results"),
+        Commands::Status { .. } => Some("status"),
+        Commands::Whoami { .. } => Some("whoami"),
+        Commands::Ioc { .. } => Some("ioc"),
+        Commands::Network { .. } => Some("network"),
+        Commands::Vuln { .. } => Some("vuln query"),
+        Commands::Search { .. } => Some("search"),
+        Commands::Open { .. }
+        | Commands::Config { .. }
+        | Commands::Completions { .. }
+        | Commands::Man
+        | Commands::Login { .. }
+        | Commands::Logout => Some("this command"),
+    }
+}
+
 fn make_actors_client(cli: &Cli) -> HostClient {
-    let config = Config::load();
+    let config = Config::load_with_profile(cli.profile.as_deref());
     let hostname = config.resolved_actors_hostname(cli.actors_hostname.as_deref());
     // Public, read-only host: no credential to pass.
     HostClient::new(&hostname, None)
 }
 
 fn make_vuln_client(cli: &Cli) -> HostClient {
-    let config = Config::load();
+    let config = Config::load_with_profile(cli.profile.as_deref());
     let hostname = config.resolved_cve_hostname(cli.cve_hostname.as_deref());
     let token = config.resolved_vuln_token(cli.vuln_token.as_deref());
     HostClient::new(&hostname, token)
 }
 
 fn make_client(cli: &Cli) -> MlabClient {
-    let config = Config::load();
+    let config = Config::load_with_profile(cli.profile.as_deref());
     let hostname = config.resolved_hostname(cli.hostname.as_deref());
     let api_key = config.resolved_api_key(cli.api_key.as_deref());
     MlabClient::new(&hostname, &api_key)
@@ -595,10 +712,21 @@ fn make_client(cli: &Cli) -> MlabClient {
 fn main() {
     let cli = Cli::parse();
     ui::init(cli.quiet);
+    output::init(cli.output.as_deref());
+    client::configure(cli.dry_run, cli.timeout);
+    commands::scan::set_max_wait(cli.max_wait);
+
+    // Refuse CSV once, up front, rather than letting a command quietly fall
+    // back to its table and hand the user something a spreadsheet cannot read.
+    if output::wants_csv() {
+        if let Some(name) = csv_unsupported(&cli.command) {
+            output::refuse_csv(name);
+        }
+    }
 
     match &cli.command {
         Commands::Login { key } => {
-            let config = Config::load();
+            let config = Config::load_with_profile(cli.profile.as_deref());
             let hostname = config.resolved_hostname(cli.hostname.as_deref());
             commands::login::run(&hostname, key.as_deref());
         }
@@ -673,6 +801,44 @@ fn main() {
                 }
                 CveAction::Detail { id, json } => commands::cve::detail(&client, id, *json),
                 CveAction::Latest { json } => commands::cve::latest(&client, *json),
+            }
+        }
+        Commands::Search { query, json } => {
+            let client = make_client(&cli);
+            let vuln = make_vuln_client(&cli);
+            commands::search::run(&client, &vuln, query, *json);
+        }
+        Commands::Open { query, print } => {
+            let config = Config::load_with_profile(cli.profile.as_deref());
+            commands::search::open(
+                query,
+                &config.resolved_hostname(cli.hostname.as_deref()),
+                &config.resolved_cve_hostname(cli.cve_hostname.as_deref()),
+                *print,
+            );
+        }
+        Commands::Config { action } => match action {
+            ConfigAction::Path => commands::config::path(),
+            ConfigAction::List { reveal } => {
+                commands::config::list(cli.profile.as_deref(), *reveal)
+            }
+            ConfigAction::Get { key, reveal } => {
+                commands::config::get(key, cli.profile.as_deref(), *reveal)
+            }
+            ConfigAction::Set { key, value } => {
+                commands::config::set(key, value, cli.profile.as_deref())
+            }
+        },
+        Commands::Completions { shell } => {
+            let mut command = <Cli as clap::CommandFactory>::command();
+            let name = command.get_name().to_string();
+            clap_complete::generate(*shell, &mut command, name, &mut std::io::stdout());
+        }
+        Commands::Man => {
+            let command = <Cli as clap::CommandFactory>::command();
+            let mut buffer = Vec::new();
+            if clap_mangen::Man::new(command).render(&mut buffer).is_ok() {
+                print!("{}", String::from_utf8_lossy(&buffer));
             }
         }
         Commands::Actor { action } => {

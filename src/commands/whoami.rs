@@ -1,5 +1,6 @@
 use colored::Colorize;
 
+use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
@@ -8,7 +9,7 @@ use crate::ui;
 pub fn run(client: &MlabClient, json: bool) {
     let body = ui::with_spinner("Checking credentials", || fetch(client.get("/")));
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }

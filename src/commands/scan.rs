@@ -5,16 +5,36 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 use serde::Deserialize;
 
+use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
 use crate::ui::{self, Spinner};
 use crate::util::urlencode;
 
-/// Upper bound on how long `scan domain` follows a scan before handing the user
-/// back their shell. The API has no terminal "failed" answer on this route, so
+/// Upper bound on how long a follow runs before handing the user back their
+/// shell. The API has no terminal "failed" answer on the status route, so
 /// without a ceiling a dead scan would poll forever.
-const MAX_WAIT: Duration = Duration::from_secs(15 * 60);
+static MAX_WAIT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(15 * 60);
+
+pub fn set_max_wait(secs: Option<u64>) {
+    if let Some(s) = secs {
+        MAX_WAIT_SECS.store(s.max(1), std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn max_wait() -> Duration {
+    Duration::from_secs(MAX_WAIT_SECS.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+/// Polls start quick and slow down: a scan that finishes in seconds is caught
+/// straight away, and one that takes ten minutes is not asked 200 times.
+const POLL_FIRST: Duration = Duration::from_secs(2);
+const POLL_MAX: Duration = Duration::from_secs(15);
+
+fn next_interval(current: Duration) -> Duration {
+    current.mul_f64(1.5).min(POLL_MAX)
+}
 
 enum Poll {
     Status(String),
@@ -79,7 +99,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
     // clean stream on stdout.
     let spinner = Spinner::start(format!("Scanning {domain} — queued"));
     let start = Instant::now();
-    let poll_interval = Duration::from_secs(3);
+    let mut poll_interval = POLL_FIRST;
     let mut last_status = String::from("pending");
     let mut consecutive_errors = 0u32;
 
@@ -88,7 +108,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
             break;
         }
 
-        if start.elapsed() >= MAX_WAIT {
+        if start.elapsed() >= max_wait() {
             abort_polling(
                 ApiError::new(
                     None,
@@ -102,6 +122,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
         }
 
         thread::sleep(poll_interval);
+        poll_interval = next_interval(poll_interval);
 
         match poll_domain_status(client, domain) {
             Poll::Status(s) => {
@@ -152,6 +173,9 @@ fn status_label(status: &str) -> &str {
 
 #[derive(Deserialize)]
 struct IpResult {
+    // Defaulted like every other field: this payload has drifted before, and a
+    // renamed key should degrade the header, not kill the command.
+    #[serde(default)]
     ip: String,
     #[serde(default)]
     reserved: bool,
@@ -196,7 +220,7 @@ pub fn ip(client: &MlabClient, ip: &str, json: bool) {
         fetch(client.get(&format!("/scan/ip?ip={}", urlencode(ip))))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -358,7 +382,7 @@ pub fn crypto(client: &MlabClient, addresses: &[String], chain: Option<&str>, js
     }
     let body = ui::with_spinner(&format!("Looking up {address}"), || fetch(client.get(&path)));
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -425,7 +449,7 @@ pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
         || fetch(client.upload_file(file_path)),
     );
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -470,6 +494,7 @@ pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
 fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
     let spinner = Spinner::start("Analysing — queued");
     let start = Instant::now();
+    let mut poll_interval = POLL_FIRST;
     let mut consecutive_errors = 0u32;
 
     loop {
@@ -528,7 +553,7 @@ fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
             _ => {}
         }
 
-        if start.elapsed() >= MAX_WAIT {
+        if start.elapsed() >= max_wait() {
             crate::ui::restore();
             ApiError::new(
                 None,
@@ -540,7 +565,8 @@ fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
             .report();
         }
 
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(poll_interval);
+        poll_interval = next_interval(poll_interval);
     }
 
     crate::commands::results::file(client, sha256, None, json);
@@ -561,5 +587,31 @@ mod tests {
         assert_eq!(country_flag(""), "");
         assert_eq!(country_flag("FRA"), "");
         assert_eq!(country_flag("12"), "");
+    }
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+
+    #[test]
+    fn polls_back_off_but_stay_bounded() {
+        let mut interval = POLL_FIRST;
+        let mut seen = vec![interval];
+        for _ in 0..12 {
+            interval = next_interval(interval);
+            seen.push(interval);
+        }
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "{seen:?}");
+        assert_eq!(*seen.last().unwrap(), POLL_MAX);
+    }
+
+    #[test]
+    fn the_ceiling_is_configurable_and_never_zero() {
+        set_max_wait(Some(42));
+        assert_eq!(max_wait(), Duration::from_secs(42));
+        set_max_wait(Some(0));
+        assert_eq!(max_wait(), Duration::from_secs(1));
+        set_max_wait(Some(15 * 60));
     }
 }

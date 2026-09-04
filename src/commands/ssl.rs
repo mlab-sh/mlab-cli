@@ -1,6 +1,7 @@
 use colored::Colorize;
 use serde::Deserialize;
 
+use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::ui;
@@ -30,12 +31,28 @@ pub fn run(client: &MlabClient, domain: &str, json: bool) {
         fetch(client.get(&format!("/domain/ssl?domain={}", urlencode(domain))))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
 
     let certs: Vec<SslCert> = parse_or_exit(&body, "SSL");
+
+    if output::wants_csv() {
+        let rows: Vec<Vec<String>> = certs
+            .iter()
+            .map(|c| {
+                vec![
+                    c.common_name.clone(),
+                    date_only(&c.not_before).to_string(),
+                    date_only(&c.not_after).to_string(),
+                    shorten_issuer(&c.issuer_name),
+                    c.serial_number.clone(),
+                ]
+            })
+            .collect();
+        return output::csv_table(&["common_name", "not_before", "not_after", "issuer", "serial"], &rows);
+    }
 
     if certs.is_empty() {
         println!("  No SSL certificates on record for {}.", domain.cyan());

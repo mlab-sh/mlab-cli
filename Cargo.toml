@@ -24,6 +24,8 @@ dirs = "6"
 colored = "3"
 dialoguer = "0.11"
 base64 = "0.22"
+clap_complete = "4"
+clap_mangen = "0.2"
 
 [profile.release]
 strip = true

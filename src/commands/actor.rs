@@ -7,6 +7,7 @@
 use colored::Colorize;
 use serde_json::Value;
 
+use crate::output;
 use crate::client::HostClient;
 use crate::commands::{parse_or_exit, print_json, vuln_body};
 use crate::error::{ApiError, ErrorKind};
@@ -56,13 +57,34 @@ pub fn list(client: &HostClient, filters: &ListFilters, json: bool) {
 
     let body = ui::with_spinner("Listing threat actors", || vuln_body(client.get(&path)));
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
 
     let v: Value = parse_or_exit(&body, "actors");
     let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+
+    if output::wants_csv() {
+        let rows: Vec<Vec<String>> = items
+            .iter()
+            .map(|a| {
+                vec![
+                    text(a, "slug").to_string(),
+                    text(a, "primary_name").to_string(),
+                    origin_of(a),
+                    join(a, "motivation"),
+                    join(a, "targets_sectors"),
+                    join(a, "targets_countries"),
+                ]
+            })
+            .collect();
+        return output::csv_table(
+            &["slug", "name", "origin", "motivation", "sectors", "countries"],
+            &rows,
+        );
+    }
+
     let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
     let offset = v.get("offset").and_then(|o| o.as_u64()).unwrap_or(0);
     let limit = v.get("limit").and_then(|l| l.as_u64()).unwrap_or(0);
@@ -119,7 +141,7 @@ pub fn get(client: &HostClient, slug: &str, json: bool) {
         vuln_body(client.get(&format!("/api/v1/actors/{}", urlencode(slug))))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -183,7 +205,7 @@ pub fn by_cve(client: &HostClient, cve: &str, json: bool) {
         vuln_body(client.get(&format!("/api/v1/cves/{}/actors", urlencode(&cve))))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }

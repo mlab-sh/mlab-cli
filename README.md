@@ -107,8 +107,10 @@ Common flags:
 - `--json` — emit raw JSON (good for piping into `jq`); accepted by every command
 - `--no-follow` (domain only) — fire the scan and exit immediately
 
-`scan domain` follows the scan for at most 15 minutes and stops as soon as the
-API reports a failure, rather than polling a dead scan forever. Safe requests are
+`scan domain` follows the scan for at most 15 minutes (`--max-wait`) and stops as
+soon as the API reports a failure, rather than polling a dead scan forever. Polls
+start at 2 s and back off to 15 s, so a quick scan is caught immediately and a
+long one is not asked two hundred times. Safe requests are
 retried on transport blips and 5xx, and a `429` with a short `Retry-After` is
 honoured; a scan launch is never replayed, so a retry cannot spend your quota
 twice.
@@ -288,8 +290,74 @@ exist).
 | `--vuln-token <token>` | vuln.mlab.sh CI token — raises the scan quota |
 | `--actors-hostname <url>` | Override the threat-actor API host |
 | `--quiet`, `-q` | Suppress spinners and progress output |
+| `--output`, `-o` | `table` (default), `json` or `csv` |
+| `--dry-run` | Print the request that would be sent, and stop |
+| `--timeout <secs>` | HTTP request timeout (default 60) |
+| `--max-wait <secs>` | How long to follow a running scan (default 900) |
+| `--profile <name>` | Configuration profile to use |
 
 Useful for self-hosted deployments or staging environments.
+
+### `mlab search` — one entry point
+
+```bash
+mlab search 8.8.8.8
+mlab search abuse@example.com
+mlab search CVE-2024-3094
+mlab search 0x742d35Cc6634C0532925a3b844Bc454e4438f44e
+```
+
+Works out what you pasted — IP, domain, URL, hash, email, phone, MAC, crypto
+address or CVE — and routes it to the lookup that owns it, saying what it
+detected. Detection is local: an unrecognised value costs no request.
+
+Searching a **domain** reads the existing report rather than launching a scan: a
+scan spends quota and takes minutes, so it stays an explicit `mlab scan domain`.
+
+### `mlab open` — jump to the web report
+
+```bash
+mlab open example.com
+mlab open CVE-2024-3094 --print   # print the URL instead of launching a browser
+```
+
+### `mlab config` — read and edit the config file
+
+```bash
+mlab config path
+mlab config list
+mlab config set hostname https://staging.mlab.sh
+mlab --profile work config set api_key mlab_xxx
+```
+
+Credentials are masked (`mlab…mnop`) unless you pass `--reveal`, so a config dump
+pasted into an issue does not leak a key.
+
+**Profiles** let one machine work across several organisations:
+
+```yaml
+api_key: personal-key
+profiles:
+  work:
+    api_key: work-key
+    hostname: https://mlab.example.internal
+```
+
+```bash
+mlab --profile work whoami
+MLAB_PROFILE=work mlab limits
+```
+
+A profile overrides only the fields it sets. Naming one that does not exist is an
+error, never a silent fall-through to the default credentials.
+
+### Shell completions and man page
+
+```bash
+mlab completions zsh > ~/.zfunc/_mlab
+mlab completions bash > /etc/bash_completion.d/mlab
+mlab man > /usr/local/share/man/man1/mlab.1
+```
 
 ## Progress output
 
@@ -313,6 +381,23 @@ off when `CI` is set. `--quiet` silences progress only — errors still print.
 ```bash
 mlab -q scan domain example.com --json > report.json
 MLAB_NO_PROGRESS=1 mlab limits
+```
+
+## Output formats
+
+`--output json` is the uniform equivalent of the per-command `--json`, which
+still works. `--output csv` is offered where a command has a genuine tabular
+shape — `limits`, `ssl`, `cve search`, `cve latest`, `actor list` and
+`sbom scan` — and is refused with a clear message elsewhere, rather than falling
+back to a table no spreadsheet can read. `sbom scan --output csv` emits the same
+columns, in the same order, as the web scan page's export.
+
+`--dry-run` prints the first request a command would send and stops, which is how
+you check what a flag actually does before spending quota on it:
+
+```bash
+$ mlab --dry-run scan crypto 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
+GET https://mlab.sh/api/v1/scan/crypto?address=1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 ```
 
 ## Exit codes

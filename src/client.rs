@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -11,6 +12,28 @@ use crate::error::{ApiError, ErrorKind};
 const MAX_ATTEMPTS: u32 = 3;
 /// Longest `Retry-After` we will sit through rather than handing the user an error.
 const MAX_RETRY_AFTER: u64 = 30;
+
+static DRY_RUN: AtomicBool = AtomicBool::new(false);
+static TIMEOUT_SECS: AtomicU64 = AtomicU64::new(60);
+
+/// Applied once at startup, before any client is built.
+pub fn configure(dry_run: bool, timeout: Option<u64>) {
+    DRY_RUN.store(dry_run, Ordering::SeqCst);
+    if let Some(secs) = timeout {
+        TIMEOUT_SECS.store(secs.max(1), Ordering::SeqCst);
+    }
+}
+
+/// In dry-run the request is described and the process stops there. Stopping at
+/// the first call is deliberate: a command whose second request depends on the
+/// first has no honest URL to print for it.
+fn dry_run_guard(method: &str, url: &str) {
+    if DRY_RUN.load(Ordering::SeqCst) {
+        crate::ui::restore();
+        println!("{method} {url}");
+        std::process::exit(0);
+    }
+}
 
 pub struct MlabClient {
     client: Client,
@@ -41,6 +64,7 @@ impl MlabClient {
     /// short backoff; a 429 is honoured when the server names a sane delay.
     pub fn get(&self, path: &str) -> Result<Response, ApiError> {
         let url = format!("{}{}", self.base_url, path);
+        dry_run_guard("GET", &url);
         let mut attempt = 1;
         loop {
             let result = self
@@ -61,8 +85,10 @@ impl MlabClient {
 
     /// Not retried: replaying a scan launch would spend the caller's quota twice.
     pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response, ApiError> {
+        let url = format!("{}{}", self.base_url, path);
+        dry_run_guard("POST", &url);
         self.client
-            .post(format!("{}{}", self.base_url, path))
+            .post(url)
             .header("Authorization", self.auth_header())
             .header("Content-Type", "application/json")
             .json(body)
@@ -73,6 +99,9 @@ impl MlabClient {
     /// Upload lives at the site root (`/upload/file`), NOT under `/api/v1` —
     /// the API router has no `upload` route, so the prefixed URL 404s.
     pub fn upload_file(&self, file_path: &Path) -> Result<Response, ApiError> {
+        let url = format!("{}/upload/file", self.root_url);
+        dry_run_guard("POST", &url);
+
         let form = multipart::Form::new()
             .file("file", file_path)
             .map_err(|e| {
@@ -80,7 +109,7 @@ impl MlabClient {
             })?;
 
         self.client
-            .post(format!("{}/upload/file", self.root_url))
+            .post(url)
             .header("Authorization", self.auth_header())
             .multipart(form)
             .send()
@@ -90,7 +119,7 @@ impl MlabClient {
 
 pub fn build_http_client() -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(TIMEOUT_SECS.load(Ordering::SeqCst)))
         .user_agent(concat!("mlab-cli/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_else(|_| Client::new())
@@ -199,6 +228,7 @@ impl HostClient {
 
     pub fn get(&self, path: &str) -> Result<Response, ApiError> {
         let url = format!("{}{}", self.base_url, path);
+        dry_run_guard("GET", &url);
         let mut attempt = 1;
         loop {
             let result = self.authorize(self.client.get(&url)).send();
@@ -214,7 +244,9 @@ impl HostClient {
 
     /// A scan is metered, so it is never replayed automatically.
     pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<Response, ApiError> {
-        self.authorize(self.client.post(format!("{}{}", self.base_url, path)))
+        let url = format!("{}{}", self.base_url, path);
+        dry_run_guard("POST", &url);
+        self.authorize(self.client.post(url))
             .header("Content-Type", "application/json")
             .json(body)
             .send()
@@ -224,7 +256,9 @@ impl HostClient {
     /// Raw lockfile upload: the scanner accepts the file as the body and detects
     /// the format itself, so nothing has to be parsed client-side.
     pub fn post_raw(&self, path: &str, body: Vec<u8>) -> Result<Response, ApiError> {
-        self.authorize(self.client.post(format!("{}{}", self.base_url, path)))
+        let url = format!("{}{}", self.base_url, path);
+        dry_run_guard("POST", &url);
+        self.authorize(self.client.post(url))
             .header("Content-Type", "application/octet-stream")
             .body(body)
             .send()

@@ -13,6 +13,7 @@ use std::path::Path;
 use colored::Colorize;
 use serde_json::Value;
 
+use crate::output;
 use crate::client::HostClient;
 use crate::commands::{print_json, vuln_body};
 use crate::cvss::{band, score_of, Severity};
@@ -104,7 +105,33 @@ pub fn scan(client: &HostClient, opts: &ScanOptions) {
 
     let v: Value = crate::commands::parse_or_exit(&body, "scan");
     let findings = collect(&v);
-    render(&v, &findings, &label);
+
+    if output::wants_csv() {
+        // Same columns, in the same order, as the web scan page's CSV export.
+        let rows: Vec<Vec<String>> = findings
+            .iter()
+            .map(|f| {
+                vec![
+                    f.package.clone(),
+                    f.version.clone(),
+                    f.ecosystem.clone(),
+                    f.advisory.clone(),
+                    f.cve.clone(),
+                    f.score.map(|s| format!("{s:.1}")).unwrap_or_default(),
+                    f.severity.label().to_string(),
+                    f.fixed.clone(),
+                    f.summary.replace('\n', " "),
+                ]
+            })
+            .collect();
+        output::csv_table(
+            &["package", "version", "ecosystem", "advisory", "cve", "cvss", "severity", "fixed", "summary"],
+            &rows,
+        );
+    } else {
+        render(&v, &findings, &label);
+    }
+
     gate(&findings, &v, threshold, opts.json);
 }
 
@@ -136,7 +163,7 @@ pub fn query(client: &HostClient, coordinate: &str, version: Option<&str>, json:
         vuln_body(client.post_json("/api/v2/query", &payload))
     });
 
-    if json {
+    if output::wants_json(json) {
         print_json(&body);
         return;
     }
@@ -428,7 +455,7 @@ fn gate(findings: &[Finding], payload: &Value, threshold: Option<Severity>, json
 
     let reasons = incomplete(payload);
     if !reasons.is_empty() {
-        if json {
+        if output::wants_json(json) {
             for reason in &reasons {
                 ui::warning(reason);
             }
