@@ -37,14 +37,24 @@ static DIRTY: AtomicBool = AtomicBool::new(false);
 /// call from inside `with_spinner`.
 static STOP_ALL: AtomicBool = AtomicBool::new(false);
 
-/// Decide once, at startup, whether animation is appropriate here.
+/// Decide once, at startup, what this run may print.
+///
+/// Two separate questions, and conflating them was a bug: `--quiet` and
+/// `MLAB_NO_PROGRESS` silence *everything* this module writes, while CI only
+/// rules out *animation*. A build log still wants the warnings — one suppressed
+/// there is one nobody ever reads.
 pub fn init(quiet: bool) {
-    let suppressed = quiet
-        || std::env::var("MLAB_NO_PROGRESS").map(|v| v != "0").unwrap_or(false)
-        || std::env::var("CI").map(|v| !v.is_empty() && v != "0" && v != "false").unwrap_or(false);
+    let silenced = quiet || env_flag("MLAB_NO_PROGRESS");
+    let animated = !silenced && !env_flag("CI") && std::io::stderr().is_terminal();
 
-    QUIET.store(suppressed, Ordering::SeqCst);
-    ENABLED.store(!suppressed && std::io::stderr().is_terminal(), Ordering::SeqCst);
+    QUIET.store(silenced, Ordering::SeqCst);
+    ENABLED.store(animated, Ordering::SeqCst);
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| !v.is_empty() && v != "0" && v != "false")
+        .unwrap_or(false)
 }
 
 pub fn enabled() -> bool {
@@ -274,6 +284,33 @@ mod tests {
         init(true);
         assert!(quiet());
         assert!(!enabled());
+    }
+
+    #[test]
+    fn ci_stops_the_animation_without_stopping_the_messages() {
+        // The regression this guards: treating CI as "quiet" swallowed every
+        // warning and status line in exactly the environment that needs them.
+        let _g = guard();
+        std::env::set_var("CI", "true");
+        init(false);
+        let (animated, silenced) = (enabled(), quiet());
+        std::env::remove_var("CI");
+        init(false);
+
+        assert!(!animated, "CI must not animate");
+        assert!(!silenced, "CI must still print messages");
+    }
+
+    #[test]
+    fn an_env_flag_is_off_when_empty_or_falsey() {
+        for value in ["", "0", "false"] {
+            std::env::set_var("MLAB_TEST_FLAG", value);
+            assert!(!env_flag("MLAB_TEST_FLAG"), "for {value:?}");
+        }
+        std::env::set_var("MLAB_TEST_FLAG", "1");
+        assert!(env_flag("MLAB_TEST_FLAG"));
+        std::env::remove_var("MLAB_TEST_FLAG");
+        assert!(!env_flag("MLAB_TEST_FLAG"));
     }
 
     #[test]

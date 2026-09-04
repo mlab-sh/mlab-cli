@@ -375,8 +375,10 @@ Three rules govern it:
 - **Nothing is drawn for fast work.** A spinner only appears once a call has run
   past 300 ms, so quick lookups do not flash.
 
-Turn it off with `--quiet`/`-q`, or `MLAB_NO_PROGRESS=1`. It also switches itself
-off when `CI` is set. `--quiet` silences progress only — errors still print.
+Turn it off with `--quiet`/`-q`, or `MLAB_NO_PROGRESS=1` — both silence every
+status line as well as the spinner. Setting `CI` only turns off the *animation*:
+build logs still get the messages, because a warning nobody sees is not a
+warning. `--quiet` silences progress only — errors always print.
 
 ```bash
 mlab -q scan domain example.com --json > report.json

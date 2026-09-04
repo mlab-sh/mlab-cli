@@ -1345,6 +1345,39 @@ fn quiet_silences_progress_but_keeps_the_result() {
 }
 
 #[test]
+fn a_ci_environment_keeps_the_messages_and_drops_only_the_animation() {
+    // CI was briefly treated as `--quiet`, which swallowed every warning in the
+    // one place they are most needed. This is the end-to-end guard.
+    let server = domain_server(r#"{"status":"pending"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab_env(
+        &home,
+        &["scan", "domain", "example.com", "--no-follow"],
+        &[("CI", "true")],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("Scan launched"), "stderr: {:?}", stderr(&out));
+    assert!(!stderr(&out).contains('⠋'), "no animation in CI: {:?}", stderr(&out));
+}
+
+#[test]
+fn quiet_beats_ci_when_both_are_present() {
+    let server = domain_server(r#"{"status":"pending"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab_env(
+        &home,
+        &["--quiet", "scan", "domain", "example.com", "--no-follow"],
+        &[("CI", "true")],
+    );
+
+    assert!(out.status.success());
+    assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
+}
+
+#[test]
 fn quiet_still_reports_errors() {
     // Silencing progress must not silence the reason a command failed.
     let server = TestServer::start(|_| error(400, "Provided domain is invalid."));
