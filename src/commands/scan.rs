@@ -7,29 +7,68 @@ use colored::Colorize;
 use serde::Deserialize;
 
 use crate::client::MlabClient;
+use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::error::{ApiError, ErrorKind};
+use crate::util::urlencode;
 
-pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
-    // 1. Launch the scan
-    let body = serde_json::json!({ "domain": domain });
-    let resp = match client.post_json("/scan/domain", &body) {
-        Ok(r) => r,
+/// Upper bound on how long `scan domain` follows a scan before handing the user
+/// back their shell. The API has no terminal "failed" answer on this route, so
+/// without a ceiling a dead scan would poll forever.
+const MAX_WAIT: Duration = Duration::from_secs(15 * 60);
+
+enum Poll {
+    Status(String),
+    /// The call will keep failing the same way — stop.
+    Fatal(ApiError),
+    /// A blip worth retrying (network, 5xx, malformed body).
+    Transient(String),
+}
+
+fn poll_domain_status(client: &MlabClient, domain: &str) -> Poll {
+    let raw = crate::commands::body(client.get(&format!(
+        "/scan/domain/status?domain={}",
+        urlencode(domain)
+    )));
+
+    let raw = match raw {
+        Ok(b) => b,
+        // A classified error already knows whether retrying can help: only a
+        // plain transport/5xx blip is worth another round.
         Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
+            return match e.kind {
+                ErrorKind::Other => Poll::Transient(e.message),
+                _ => Poll::Fatal(e),
+            }
         }
     };
 
-    let status = resp.status();
-    let resp_body = resp.text().unwrap_or_default();
-
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        match serde_json::from_str::<serde_json::Value>(&resp_body) {
-            Ok(v) => eprintln!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => eprintln!("{resp_body}"),
-        }
-        std::process::exit(1);
+    match serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
+    {
+        Some(s) => Poll::Status(s),
+        None => Poll::Transient("malformed status response".to_string()),
     }
+}
+
+fn abort_polling(error: ApiError, domain: &str) -> ! {
+    clear_spinner();
+    eprintln!(
+        "  Check again later with: {}",
+        format!("mlab results domain {domain}").dimmed()
+    );
+    error.report()
+}
+
+fn clear_spinner() {
+    print!("\r{}\r", " ".repeat(60));
+    io::stdout().flush().ok();
+}
+
+pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
+    // 1. Launch the scan
+    let payload = serde_json::json!({ "domain": domain });
+    fetch(client.post_json("/scan/domain", &payload));
 
     if no_follow {
         println!(
@@ -54,6 +93,7 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
     let start = Instant::now();
     let poll_interval = Duration::from_secs(3);
     let mut last_status = String::from("pending");
+    let mut consecutive_errors = 0u32;
 
     loop {
         let elapsed = start.elapsed();
@@ -80,25 +120,47 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
             break;
         }
 
+        if elapsed >= MAX_WAIT {
+            abort_polling(
+                ApiError::new(
+                    None,
+                    format!(
+                        "gave up after {}s (last status: {last_status})",
+                        elapsed.as_secs()
+                    ),
+                ),
+                domain,
+            );
+        }
+
         thread::sleep(poll_interval);
 
-        // Poll
-        match client.get(&format!("/scan/domain/status?domain={}", domain)) {
-            Ok(resp) => {
-                let body = resp.text().unwrap_or_default();
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(s) = v.get("status").and_then(|s| s.as_str()) {
-                        last_status = s.to_string();
-                    }
+        match poll_domain_status(client, domain) {
+            Poll::Status(s) => {
+                consecutive_errors = 0;
+                // A terminal failure must not be mistaken for progress: without
+                // this the loop would spin until the timeout on a dead scan.
+                if matches!(s.as_str(), "failed" | "fail" | "error") {
+                    abort_polling(ApiError::new(None, format!("scan {s}")), domain);
+                }
+                last_status = s;
+            }
+            // 4xx means the request itself is wrong (bad key, unknown domain);
+            // retrying cannot fix it, so stop rather than loop silently.
+            Poll::Fatal(e) => abort_polling(e, domain),
+            Poll::Transient(msg) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 5 {
+                    abort_polling(
+                        ApiError::new(None, format!("{msg} (5 consecutive failures)")),
+                        domain,
+                    );
                 }
             }
-            Err(_) => {}
         }
     }
 
-    // Clear spinner line
-    print!("\r{}\r", " ".repeat(60));
-    io::stdout().flush().ok();
+    clear_spinner();
 
     println!(
         "  {} Scan completed in {}s",
@@ -157,40 +219,14 @@ struct IpResult {
 }
 
 pub fn ip(client: &MlabClient, ip: &str, json: bool) {
-    let resp = match client.get(&format!("/scan/ip?ip={}", ip)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        eprintln!("{body}");
-        std::process::exit(1);
-    }
+    let body = fetch(client.get(&format!("/scan/ip?ip={}", urlencode(ip))));
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        print_json(&body);
         return;
     }
 
-    let r: IpResult = match serde_json::from_str(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            eprintln!("{} Failed to parse IP result.", "error:".red().bold());
-            eprintln!("{body}");
-            std::process::exit(1);
-        }
-    };
-
+    let r: IpResult = parse_or_exit(&body, "IP");
     print_ip_ui(&r);
 }
 
@@ -332,54 +368,47 @@ fn country_flag(cc: &str) -> String {
 //  Crypto lookup
 // ═══════════════════════════════════════════════════════════════════
 
-pub fn crypto(client: &MlabClient, address: &str, chain: &str, json: bool) {
-    let path = format!(
-        "/scan/crypto?address={}&chain={}",
-        urlencode(address),
-        urlencode(chain),
-    );
-    let resp = match client.get(&path) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        eprintln!("{body}");
-        std::process::exit(1);
+pub fn crypto(client: &MlabClient, address: &str, chain: Option<&str>, json: bool) {
+    // An explicit `chain` short-circuits the API's address classification, so
+    // only send one when the user actually named it — otherwise a BTC address
+    // would be looked up on whatever default we hardcoded.
+    let mut path = format!("/scan/crypto?address={}", urlencode(address));
+    if let Some(c) = chain {
+        path.push_str(&format!("&chain={}", urlencode(c)));
     }
+    let body = fetch(client.get(&path));
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        print_json(&body);
         return;
     }
 
-    let v: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(v) => v,
-        Err(_) => {
-            println!("{body}");
-            return;
-        }
-    };
+    let v: serde_json::Value = parse_or_exit(&body, "crypto");
 
     let div = format!("  {}", "─".repeat(60));
     println!();
     println!("  {} Crypto Lookup  {}", "🪙", address.cyan().bold());
     println!("{}", div.dimmed());
-    println!("  {:<14} {}", "Chain:".dimmed(), chain.to_uppercase());
+    let resolved_chain = v
+        .get("chain")
+        .and_then(|c| c.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| chain.unwrap_or("unknown").to_uppercase());
+    let source = match v.get("chain_source").and_then(|c| c.as_str()) {
+        Some("detected") => "  (detected from address)",
+        Some("default") => "  (default — pass --chain to override)",
+        _ => "",
+    };
+    println!(
+        "  {:<14} {}{}",
+        "Chain:".dimmed(),
+        resolved_chain.to_uppercase(),
+        source.dimmed()
+    );
 
     if let Some(obj) = v.as_object() {
         for (k, val) in obj {
-            if k == "address" || k == "chain" {
+            if k == "address" || k == "chain" || k == "chain_source" {
                 continue;
             }
             let label = format!("{}:", k);
@@ -396,34 +425,61 @@ pub fn crypto(client: &MlabClient, address: &str, chain: &str, json: bool) {
     println!();
 }
 
-fn urlencode(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
-                vec![c]
-            } else {
-                format!("%{:02X}", c as u32).chars().collect::<Vec<_>>()
-            }
-        })
-        .collect()
-}
-
 // ═══════════════════════════════════════════════════════════════════
 //  File upload
 // ═══════════════════════════════════════════════════════════════════
 
-pub fn file(client: &MlabClient, path: &str) {
+pub fn file(client: &MlabClient, path: &str, json: bool) {
     let file_path = Path::new(path);
     if !file_path.exists() {
-        eprintln!("File not found: {path}");
-        std::process::exit(1);
+        ApiError {
+            status: None,
+            message: format!("file not found: {path}"),
+            kind: ErrorKind::Input,
+        }
+        .report();
     }
 
-    match client.upload_file(file_path) {
-        Ok(resp) => crate::commands::print_response(resp),
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
+    let body = fetch(client.upload_file(file_path));
+
+    if json {
+        print_json(&body);
+        return;
+    }
+
+    let v: serde_json::Value = parse_or_exit(&body, "upload");
+    let sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or("");
+
+    println!();
+    println!("  {} {}", "✔".green().bold(), "File uploaded".bold());
+    if let Some(name) = v.get("filename").and_then(|f| f.as_str()) {
+        println!("  {:<10} {}", "Stored:".dimmed(), name);
+    }
+    if !sha256.is_empty() {
+        println!("  {:<10} {}", "SHA256:".dimmed(), sha256.cyan());
+        println!();
+        println!(
+            "  {}",
+            format!("Results: mlab results file {sha256}").dimmed()
+        );
+    }
+    println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn country_flag_maps_iso_codes_to_regional_indicators() {
+        assert_eq!(country_flag("FR"), "\u{1F1EB}\u{1F1F7}");
+        assert_eq!(country_flag("fr"), "\u{1F1EB}\u{1F1F7}");
+    }
+
+    #[test]
+    fn country_flag_is_empty_for_anything_that_is_not_a_pair_of_letters() {
+        assert_eq!(country_flag(""), "");
+        assert_eq!(country_flag("FRA"), "");
+        assert_eq!(country_flag("12"), "");
     }
 }

@@ -1,6 +1,8 @@
 mod client;
 mod commands;
 mod config;
+mod error;
+mod util;
 
 use clap::{Parser, Subcommand};
 
@@ -18,6 +20,10 @@ struct Cli {
     #[arg(long, global = true)]
     cve_hostname: Option<String>,
 
+    /// Use this API key instead of the stored one (or $MLAB_API_KEY)
+    #[arg(long, global = true, value_name = "KEY")]
+    api_key: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -25,10 +31,21 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Authenticate with your API key
-    Login,
+    Login {
+        /// Provide the key non-interactively (useful in CI)
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
+    },
+
+    /// Forget the stored API key
+    Logout,
 
     /// Test your API connection
-    Whoami,
+    Whoami {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Launch a scan
     Scan {
@@ -40,6 +57,10 @@ enum Commands {
     Status {
         #[command(subcommand)]
         target: StatusTarget,
+
+        /// Output raw JSON
+        #[arg(long, global = true)]
+        json: bool,
     },
 
     /// Retrieve scan results
@@ -48,7 +69,10 @@ enum Commands {
         target: ResultsTarget,
 
         /// Output raw JSON
-        #[arg(long)]
+        ///
+        /// Global within `results` so it is accepted both before and after the
+        /// sub-command, matching how `scan ... --json` reads.
+        #[arg(long, global = true)]
         json: bool,
     },
 
@@ -108,15 +132,19 @@ enum ScanTarget {
     File {
         /// Path to the file
         path: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Lookup a cryptocurrency address
     Crypto {
         /// Wallet/contract address
         address: String,
 
-        /// Blockchain (e.g. eth, btc)
-        #[arg(long, default_value = "eth")]
-        chain: String,
+        /// Blockchain (e.g. eth, btc). Omit to let the API detect it from the address.
+        #[arg(long)]
+        chain: Option<String>,
 
         /// Output raw JSON
         #[arg(long)]
@@ -139,9 +167,37 @@ enum CveAction {
         #[arg(long)]
         date_start: Option<String>,
 
+        /// Restrict to CVEs published on or before this date (YYYY-MM-DD)
+        #[arg(long)]
+        date_end: Option<String>,
+
+        /// Narrow to a vendor (merged into the keyword server-side)
+        #[arg(long)]
+        vendor: Option<String>,
+
+        /// Filter by weakness, e.g. CWE-79
+        #[arg(long)]
+        cwe: Option<String>,
+
+        /// Only CVEs scoring at least this CVSS value (0-10)
+        #[arg(long)]
+        min_cvss: Option<f64>,
+
+        /// Only CVEs listed in the CISA KEV catalogue
+        #[arg(long)]
+        kev_only: bool,
+
         /// Exact-match search
         #[arg(long)]
         exact: bool,
+
+        /// Result page, starting at 0
+        #[arg(long, default_value_t = 0)]
+        page: u32,
+
+        /// Results per page (max 100)
+        #[arg(long)]
+        limit: Option<u32>,
 
         /// Output raw JSON
         #[arg(long)]
@@ -189,38 +245,40 @@ enum ResultsTarget {
 
 fn make_client(cli: &Cli) -> MlabClient {
     let config = Config::load();
-    let hostname = cli
-        .hostname
-        .as_deref()
-        .unwrap_or(&config.hostname);
-    let api_key = config.require_api_key();
-    MlabClient::new(hostname, api_key)
+    let hostname = config.resolved_hostname(cli.hostname.as_deref());
+    let api_key = config.resolved_api_key(cli.api_key.as_deref());
+    MlabClient::new(&hostname, &api_key)
 }
 
 fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Login => {
-            commands::login::run();
+        Commands::Login { key } => {
+            let config = Config::load();
+            let hostname = config.resolved_hostname(cli.hostname.as_deref());
+            commands::login::run(&hostname, key.as_deref());
         }
-        Commands::Whoami => {
+        Commands::Logout => {
+            commands::login::logout();
+        }
+        Commands::Whoami { json } => {
             let client = make_client(&cli);
-            commands::whoami::run(&client);
+            commands::whoami::run(&client, *json);
         }
         Commands::Scan { target } => {
             let client = make_client(&cli);
             match target {
                 ScanTarget::Domain { domain, no_follow, json } => commands::scan::domain(&client, domain, *no_follow, *json),
                 ScanTarget::Ip { ip, json } => commands::scan::ip(&client, ip, *json),
-                ScanTarget::File { path } => commands::scan::file(&client, path),
-                ScanTarget::Crypto { address, chain, json } => commands::scan::crypto(&client, address, chain, *json),
+                ScanTarget::File { path, json } => commands::scan::file(&client, path, *json),
+                ScanTarget::Crypto { address, chain, json } => commands::scan::crypto(&client, address, chain.as_deref(), *json),
             }
         }
-        Commands::Status { target } => {
+        Commands::Status { target, json } => {
             let client = make_client(&cli);
             match target {
-                StatusTarget::Domain { domain } => commands::status::domain(&client, domain),
+                StatusTarget::Domain { domain } => commands::status::domain(&client, domain, *json),
             }
         }
         Commands::Results { target, json } => {
@@ -235,10 +293,25 @@ fn main() {
             commands::ssl::run(&client, domain, *json);
         }
         Commands::Cve { action } => {
-            let host = commands::cve::resolve_hostname(cli.cve_hostname.as_deref());
+            let host = Config::load().resolved_cve_hostname(cli.cve_hostname.as_deref());
             match action {
-                CveAction::Search { query, severity, date_start, exact, json } => {
-                    commands::cve::search(&host, query, severity.as_deref(), date_start.as_deref(), *exact, *json);
+                CveAction::Search {
+                    query, severity, date_start, date_end, vendor, cwe,
+                    min_cvss, kev_only, exact, page, limit, json,
+                } => {
+                    let opts = commands::cve::SearchOptions {
+                        severity: severity.as_deref(),
+                        date_start: date_start.as_deref(),
+                        date_end: date_end.as_deref(),
+                        vendor: vendor.as_deref(),
+                        cwe: cwe.as_deref(),
+                        min_cvss: *min_cvss,
+                        kev_only: *kev_only,
+                        exact: *exact,
+                        page: *page,
+                        limit: *limit,
+                    };
+                    commands::cve::search(&host, query, &opts, *json);
                 }
                 CveAction::Detail { id, json } => {
                     commands::cve::detail(&host, id, *json);

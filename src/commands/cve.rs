@@ -1,8 +1,9 @@
 use colored::Colorize;
-use reqwest::blocking::Client;
 use serde::Deserialize;
 
-const DEFAULT_HOSTNAME: &str = "https://vuln.mlab.sh";
+use crate::client::{build_http_client, retry_after};
+use crate::error::ApiError;
+use crate::util::urlencode;
 
 #[derive(Deserialize)]
 struct SearchResponse {
@@ -73,40 +74,51 @@ struct Reference {
 
 fn fetch(hostname: &str, path: &str) -> String {
     let url = format!("{}{}", hostname.trim_end_matches('/'), path);
-    let resp = match Client::new().get(&url).send() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
-    };
+    let client = build_http_client();
 
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        eprintln!("{body}");
-        std::process::exit(1);
-    }
-    body
-}
-
-pub fn resolve_hostname(override_host: Option<&str>) -> String {
-    override_host
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| DEFAULT_HOSTNAME.to_string())
-}
-
-fn urlencode(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
-                vec![c]
-            } else {
-                format!("%{:02X}", c as u32).chars().collect::<Vec<_>>()
+    for attempt in 1..=3u32 {
+        let resp = match client.get(&url).send() {
+            Ok(r) => r,
+            Err(e) if attempt < 3 && (e.is_timeout() || e.is_connect()) => {
+                std::thread::sleep(std::time::Duration::from_millis(300 * attempt as u64));
+                continue;
             }
-        })
-        .collect()
+            Err(e) => ApiError::transport(e).report(),
+        };
+
+        let status = resp.status();
+
+        // The CVE host rate-limits its heaviest route and names the delay.
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let delay = retry_after(&resp);
+            if let Some(d) = delay {
+                if attempt < 3 && d.as_secs() <= 30 {
+                    std::thread::sleep(d);
+                    continue;
+                }
+            }
+            let wait = delay.map(|d| format!(" — retry in {}s", d.as_secs())).unwrap_or_default();
+            ApiError::new(Some(429), format!("rate limited by the CVE API{wait}")).report();
+        }
+
+        let body = resp.text().unwrap_or_default();
+
+        if !status.is_success() {
+            ApiError::from_response(status.as_u16(), &body).report();
+        }
+
+        // This host reports failures inside a 200 body, so the status code is
+        // not enough to know the call succeeded.
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(message) = v.get("error").and_then(|e| e.as_str()) {
+                ApiError::new(None, message).report();
+            }
+        }
+
+        return body;
+    }
+
+    ApiError::new(None, "the CVE API did not answer").report()
 }
 
 fn color_severity(sev: &str) -> colored::ColoredString {
@@ -119,64 +131,95 @@ fn color_severity(sev: &str) -> colored::ColoredString {
     }
 }
 
-pub fn search(
-    hostname: &str,
-    query: &str,
-    severity: Option<&str>,
-    date_start: Option<&str>,
-    exact: bool,
-    json: bool,
-) {
+pub struct SearchOptions<'a> {
+    pub severity: Option<&'a str>,
+    pub date_start: Option<&'a str>,
+    pub date_end: Option<&'a str>,
+    pub vendor: Option<&'a str>,
+    pub cwe: Option<&'a str>,
+    pub min_cvss: Option<f64>,
+    pub kev_only: bool,
+    pub exact: bool,
+    pub page: u32,
+    pub limit: Option<u32>,
+}
+
+pub fn search(hostname: &str, query: &str, opts: &SearchOptions, json: bool) {
     let mut path = format!("/api/v1/cve?q={}", urlencode(query));
-    if let Some(s) = severity {
-        path.push_str(&format!("&severity={}", urlencode(s)));
+
+    let mut push = |key: &str, value: &str| {
+        path.push_str(&format!("&{key}={}", urlencode(value)));
+    };
+
+    if let Some(v) = opts.severity {
+        push("severity", v);
     }
-    if let Some(d) = date_start {
-        path.push_str(&format!("&dateStart={}", urlencode(d)));
+    if let Some(v) = opts.date_start {
+        push("dateStart", v);
     }
-    if exact {
-        path.push_str("&exact=1");
+    if let Some(v) = opts.date_end {
+        push("dateEnd", v);
+    }
+    if let Some(v) = opts.vendor {
+        push("vendor", v);
+    }
+    if let Some(v) = opts.cwe {
+        push("cwe", v);
+    }
+    if let Some(v) = opts.min_cvss {
+        push("minCvss", &v.to_string());
+    }
+    if opts.kev_only {
+        push("kevOnly", "1");
+    }
+    if opts.exact {
+        push("exact", "1");
+    }
+    if opts.page > 0 {
+        push("page", &opts.page.to_string());
+    }
+    if let Some(v) = opts.limit {
+        push("limit", &v.to_string());
     }
 
     let body = fetch(hostname, &path);
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        crate::commands::print_json(&body);
         return;
     }
 
-    let r: SearchResponse = match serde_json::from_str(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            println!("{body}");
-            return;
-        }
-    };
-
+    let r: SearchResponse = crate::commands::parse_or_exit(&body, "CVE search");
     print_summary_list(&r.cves, r.total_results, r.start_index, r.results_per_page);
+    print_pagination_hint(&r, opts);
+}
+
+/// The API pages results but never says so; without this a user reads the first
+/// 20 hits and assumes that is everything.
+fn print_pagination_hint(r: &SearchResponse, opts: &SearchOptions) {
+    if r.results_per_page == 0 || r.total_results <= r.start_index + r.cves.len() as u64 {
+        return;
+    }
+    println!(
+        "  {}",
+        format!(
+            "More results — rerun with --page {}",
+            opts.page + 1
+        )
+        .dimmed()
+    );
+    println!();
 }
 
 pub fn latest(hostname: &str, json: bool) {
     let body = fetch(hostname, "/api/v1/cve/latest");
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        crate::commands::print_json(&body);
         return;
     }
 
-    let r: SearchResponse = match serde_json::from_str(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            println!("{body}");
-            return;
-        }
-    };
+    let r: SearchResponse = crate::commands::parse_or_exit(&body, "CVE feed");
 
     println!();
     println!("  {} CVEs published in the last 7 days", "🆕".to_string());
@@ -188,10 +231,7 @@ pub fn detail(hostname: &str, cve_id: &str, json: bool) {
     let body = fetch(hostname, &path);
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        crate::commands::print_json(&body);
         return;
     }
 

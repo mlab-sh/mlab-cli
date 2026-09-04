@@ -2,6 +2,9 @@ use colored::Colorize;
 use serde::Deserialize;
 
 use crate::client::MlabClient;
+use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::commands::ssl::{render_table, SslCert};
+use crate::util::urlencode;
 
 // ═══════════════════════════════════════════════════════════════════
 //  Domain results
@@ -27,6 +30,8 @@ struct DomainData {
     subdomains_suspicious: Vec<SuspiciousSub>,
     #[serde(default)]
     dns: DnsData,
+    #[serde(default)]
+    ssl: Vec<SslCert>,
     #[serde(default)]
     files: FilesData,
 }
@@ -80,42 +85,42 @@ struct FilesData {
 }
 
 pub fn domain(client: &MlabClient, domain: &str, json: bool) {
-    let resp = match client.get(&format!("/scan/domain/results?domain={}", domain)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        eprintln!("{body}");
-        std::process::exit(1);
-    }
+    let body = fetch(client.get(&format!(
+        "/scan/domain/results?domain={}",
+        urlencode(domain)
+    )));
 
     if json {
-        // Remove ssl from JSON output too? No, keep raw for --json
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        print_json(&body);
         return;
     }
 
-    let r: DomainResults = match serde_json::from_str(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            eprintln!("{} Failed to parse domain results.", "error:".red().bold());
-            eprintln!("{body}");
-            std::process::exit(1);
-        }
-    };
+    let r: DomainResults = parse_or_exit(&body, "domain results");
+
+    // The status route answers "success" for any non-pending scan, failures
+    // included, so an empty report is the only signal the CLI gets that nothing
+    // was actually produced.
+    let empty = r.results.subdomains.is_empty()
+        && r.results.subdomains_suspicious.is_empty()
+        && r.results.dns.resolve.is_empty()
+        && r.results.dns.txt.raw.is_empty()
+        && r.results.ssl.is_empty()
+        && r.results.files.robots_txt.is_empty()
+        && r.results.files.security_txt.is_empty();
 
     print_domain_ui(&r);
+
+    if empty {
+        eprintln!(
+            "  {} Empty report — the scan may have failed or is still running.",
+            "warning:".yellow().bold()
+        );
+        eprintln!(
+            "  Relaunch with: {}",
+            format!("mlab scan domain {}", r.domain).dimmed()
+        );
+        eprintln!();
+    }
 }
 
 fn print_domain_ui(r: &DomainResults) {
@@ -262,13 +267,33 @@ fn print_domain_ui(r: &DomainResults) {
     print_file_content("robots.txt", &r.results.files.robots_txt);
     println!();
 
-    // ── SSL hint ──
+    // ── SSL ──
+    // The certificates ship with this very response; pointing the user at
+    // another command for data already on screen was pure waste.
+    println!("  {}", "SSL Certificates".bold().underline());
+    if r.results.ssl.is_empty() {
+        println!("  {}", "None recorded for this domain.".dimmed());
+        println!();
+    } else {
+        const SHOWN: usize = 5;
+        let shown = r.results.ssl.len().min(SHOWN);
+        println!(
+            "  Showing {} of {} certificate(s):",
+            shown.to_string().bold(),
+            r.results.ssl.len().to_string().bold()
+        );
+        println!();
+        render_table(&r.results.ssl[..shown], false);
+        if r.results.ssl.len() > shown {
+            println!(
+                "  {}",
+                format!("Full history: mlab ssl {}", r.domain).dimmed()
+            );
+            println!();
+        }
+    }
+
     println!("{}", div.dimmed());
-    println!(
-        "  {} SSL certificates are not shown here. Use {} to view them.",
-        "ℹ".cyan(),
-        format!("mlab ssl {}", r.domain).cyan().bold(),
-    );
     println!();
 }
 
@@ -334,39 +359,17 @@ struct AnalysisJob {
 }
 
 pub fn file(client: &MlabClient, sha256: &str, json: bool) {
-    let resp = match client.get(&format!("/scan/file/results?sha256={}", sha256)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Request failed: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-
-    if !status.is_success() {
-        eprintln!("{} HTTP {status}", "error:".red().bold());
-        eprintln!("{body}");
-        std::process::exit(1);
-    }
+    let body = fetch(client.get(&format!(
+        "/scan/file/results?sha256={}",
+        urlencode(sha256)
+    )));
 
     if json {
-        match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap()),
-            Err(_) => println!("{body}"),
-        }
+        print_json(&body);
         return;
     }
 
-    let results: FileResults = match serde_json::from_str(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            eprintln!("{} Failed to parse file results.", "error:".red().bold());
-            eprintln!("{body}");
-            std::process::exit(1);
-        }
-    };
+    let results: FileResults = parse_or_exit(&body, "file results");
 
     print_file_ui(&results);
 }
