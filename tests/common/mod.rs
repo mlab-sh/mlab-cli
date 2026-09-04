@@ -253,6 +253,32 @@ pub fn read_config(home: &TempHome) -> String {
     fs::read_to_string(home.path.join(".mlab").join("conf.yml")).unwrap_or_default()
 }
 
+/// Run the CLI with something on stdin — the pipe case `mlab ioc` exists for.
+pub fn mlab_stdin(home: &TempHome, args: &[&str], input: &str) -> Output {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mlab"))
+        .args(args)
+        .env_remove("MLAB_API_KEY")
+        .env("HOME", &home.path)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the mlab binary");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is piped")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+
+    child.wait_with_output().expect("collect output")
+}
+
 pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }

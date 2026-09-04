@@ -330,35 +330,20 @@ fn print_file_content(name: &str, content: &str) {
 //  File results
 // ═══════════════════════════════════════════════════════════════════
 
-#[derive(Deserialize)]
-struct FileResults {
-    status: String,
-    file: FileInfo,
-    jobs_total: u32,
-    jobs_completed: u32,
-    analysis: Vec<AnalysisJob>,
-}
+// ═══════════════════════════════════════════════════════════════════
+//  File results
+// ═══════════════════════════════════════════════════════════════════
 
-#[derive(Deserialize)]
-struct FileInfo {
-    sha256: String,
-    md5: String,
-    #[serde(default)]
-    ssdeep: String,
-    filename: String,
-    size: u64,
-    mime_type: String,
-    created_at: String,
-}
+/// Rendered from a `Value` rather than a struct on purpose: this payload has
+/// already changed shape once in production (`jobs_total`/`analysis` became
+/// `tools_total`/`tools`, and the published OpenAPI example still shows the old
+/// one). A typed parse turns that into "unreadable response" and no report at
+/// all; reading defensively keeps the command useful across both.
+pub fn file(client: &MlabClient, sha256: &str, tool: Option<&str>, json: bool) {
+    if let Some(tool) = tool {
+        return tool_output(client, sha256, tool, json);
+    }
 
-#[derive(Deserialize)]
-struct AnalysisJob {
-    job_name: String,
-    end_date: String,
-    data: serde_json::Value,
-}
-
-pub fn file(client: &MlabClient, sha256: &str, json: bool) {
     let body = fetch(client.get(&format!(
         "/scan/file/results?sha256={}",
         urlencode(sha256)
@@ -369,102 +354,222 @@ pub fn file(client: &MlabClient, sha256: &str, json: bool) {
         return;
     }
 
-    let results: FileResults = parse_or_exit(&body, "file results");
-
-    print_file_ui(&results);
+    let v: serde_json::Value = parse_or_exit(&body, "file results");
+    print_file_ui(&v);
 }
 
-fn print_file_ui(r: &FileResults) {
-    let div = format!("  {}", "─".repeat(80));
+/// One tool's raw output, fetched on demand — the summary deliberately omits it.
+fn tool_output(client: &MlabClient, sha256: &str, tool: &str, json: bool) {
+    let body = fetch(client.get(&format!(
+        "/scan/file/output?sha256={}&tool={}",
+        urlencode(sha256),
+        urlencode(tool)
+    )));
 
-    // ── Header ──
-    let status_badge = match r.status.as_str() {
+    if json {
+        print_json(&body);
+        return;
+    }
+
+    let v: serde_json::Value = parse_or_exit(&body, "tool output");
+    let output = v.get("output").and_then(|o| o.as_str()).unwrap_or("");
+
+    if v.get("is_json").and_then(|b| b.as_bool()).unwrap_or(false) {
+        // Stored as a JSON string; pretty-print it rather than showing one line.
+        match serde_json::from_str::<serde_json::Value>(output) {
+            Ok(parsed) => println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or_default()),
+            Err(_) => println!("{output}"),
+        }
+    } else {
+        println!("{output}");
+    }
+}
+
+fn print_file_ui(r: &serde_json::Value) {
+    let div = format!("  {}", "─".repeat(80));
+    let status = r.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+
+    let status_badge = match status {
         "completed" => "✔ completed".green().bold(),
-        "in_progress" => "⏳ in progress".yellow().bold(),
+        "partial" => "◐ partial".yellow().bold(),
+        "failed" => "✖ failed".red().bold(),
+        "in_progress" | "running" => "⏳ in progress".yellow().bold(),
         "pending" => "⏳ pending".yellow().bold(),
         other => other.normal(),
     };
+
     println!();
     println!("  {} File Scan Results  [{}]", "📄", status_badge);
     println!("{}", div.dimmed());
 
+    if let Some(error) = r.get("error") {
+        let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("The scan failed.");
+        let reason = error.get("reason").and_then(|m| m.as_str()).unwrap_or("");
+        println!("  {} {}", "✖".red().bold(), message.red());
+        if !reason.is_empty() {
+            println!("  {:<12} {}", "Reason:".dimmed(), reason);
+        }
+        println!();
+    }
+
     // ── File metadata ──
+    let file = r.get("file").cloned().unwrap_or(serde_json::Value::Null);
+    let name = file
+        .get("display_name")
+        .or_else(|| file.get("filename"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("");
+
     println!("  {}", "File Info".bold().underline());
-    println!("  {:<12} {}", "Filename:".dimmed(), r.file.filename);
-    println!("  {:<12} {}", "MIME:".dimmed(), r.file.mime_type);
-    println!("  {:<12} {}", "Size:".dimmed(), format_size(r.file.size));
-    println!("  {:<12} {}", "Created:".dimmed(), format_date(&r.file.created_at));
+    if !name.is_empty() {
+        println!("  {:<12} {}", "Name:".dimmed(), name);
+    }
+    if let Some(mime) = file.get("mime_type").and_then(|m| m.as_str()) {
+        if !mime.is_empty() {
+            println!("  {:<12} {}", "MIME:".dimmed(), mime);
+        }
+    }
+    if let Some(size) = file.get("size").and_then(|s| s.as_u64()) {
+        println!("  {:<12} {}", "Size:".dimmed(), format_size(size));
+    }
+    if let Some(created) = file.get("created_at").and_then(|c| c.as_str()) {
+        println!("  {:<12} {}", "Created:".dimmed(), format_date(created));
+    }
     println!();
 
     // ── Hashes ──
     println!("  {}", "Hashes".bold().underline());
-    println!("  {:<12} {}", "SHA-256:".dimmed(), r.file.sha256);
-    println!("  {:<12} {}", "MD5:".dimmed(), r.file.md5);
-    if !r.file.ssdeep.is_empty() {
-        println!("  {:<12} {}", "ssdeep:".dimmed(), r.file.ssdeep);
+    for (label, key) in [("SHA-256:", "sha256"), ("SHA-1:", "sha1"), ("MD5:", "md5"), ("ssdeep:", "ssdeep")] {
+        if let Some(value) = file.get(key).and_then(|v| v.as_str()) {
+            if !value.is_empty() {
+                println!("  {:<12} {}", label.dimmed(), value);
+            }
+        }
     }
     println!();
 
-    // ── Jobs progress ──
-    let progress = format!("{}/{}", r.jobs_completed, r.jobs_total);
-    let bar = progress_bar(r.jobs_completed, r.jobs_total.max(r.jobs_completed), 20);
+    // ── Progress ──
+    let done = r.get("tools_done").or_else(|| r.get("jobs_completed")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let total = r.get("tools_total").or_else(|| r.get("jobs_total")).and_then(|v| v.as_u64()).unwrap_or(0);
     println!(
         "  {} {}  {}",
-        "Jobs:".bold(),
-        bar,
-        progress.bold(),
+        "Tools:".bold(),
+        progress_bar(done as u32, total.max(done) as u32, 20),
+        format!("{done}/{total}").bold(),
     );
     println!("{}", div.dimmed());
 
-    // ── Analysis results ──
-    if r.analysis.is_empty() {
-        println!("  {}", "No analysis results yet.".dimmed());
+    print_tools(r);
+    print_observations(r);
+    print_sightings(r);
+
+    if let Some(sha) = file.get("sha256").and_then(|s| s.as_str()) {
+        if !sha.is_empty() {
+            println!(
+                "  {}",
+                format!("Raw output of one tool: mlab results file {sha} --tool <name>").dimmed()
+            );
+            println!();
+        }
+    }
+}
+
+fn print_tools(r: &serde_json::Value) {
+    // `tools` is the current shape; `analysis` was the previous one.
+    if let Some(tools) = r.get("tools").and_then(|t| t.as_array()) {
+        if tools.is_empty() {
+            println!("  {}", "No tool has reported yet.".dimmed());
+            println!();
+            return;
+        }
+        println!();
+        println!(
+            "  {:<18} {:<12} {:<10} {:<10} {}",
+            "Tool".bold().underline(),
+            "Status".bold().underline(),
+            "Exit".bold().underline(),
+            "Duration".bold().underline(),
+            "Output".bold().underline(),
+        );
+        for t in tools {
+            let status = t.get("status").and_then(|s| s.as_str()).unwrap_or("-");
+            let coloured = match status {
+                "completed" | "ok" | "success" => status.green(),
+                "failed" | "error" => status.red(),
+                other => other.yellow(),
+            };
+            println!(
+                "  {:<18} {:<12} {:<10} {:<10} {}",
+                t.get("tool").and_then(|x| x.as_str()).unwrap_or("-"),
+                coloured,
+                t.get("exit_code").map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+                t.get("duration_ms").and_then(|d| d.as_u64()).map(|d| format!("{d} ms")).unwrap_or_else(|| "-".into()),
+                format_size(t.get("output_bytes").and_then(|b| b.as_u64()).unwrap_or(0)).dimmed(),
+            );
+            if let Some(note) = t.get("note").and_then(|n| n.as_str()) {
+                if !note.is_empty() {
+                    println!("  {:<18} {}", "", note.dimmed());
+                }
+            }
+        }
         println!();
         return;
     }
 
-    for (i, job) in r.analysis.iter().enumerate() {
-        let job_label = format!(" {} ", job.job_name.to_uppercase());
-        let end = format_date(&job.end_date);
-
-        println!();
-        println!(
-            "  {} {}  {}",
-            "▶".cyan(),
-            job_label.on_cyan().white().bold(),
-            format!("completed {end}").dimmed(),
-        );
-        println!();
-
-        let data_str = match &job.data {
-            serde_json::Value::String(s) => s.clone(),
-            other => serde_json::to_string_pretty(other).unwrap_or_default(),
-        };
-
-        let lines: Vec<&str> = data_str.lines().collect();
-        let max_lines = 30;
-        let truncated = lines.len() > max_lines;
-
-        for line in lines.iter().take(max_lines) {
-            println!("    {}", line);
+    if let Some(jobs) = r.get("analysis").and_then(|a| a.as_array()) {
+        for job in jobs {
+            let name = job.get("job_name").and_then(|n| n.as_str()).unwrap_or("job");
+            println!();
+            println!("  {} {}", "▶".cyan(), format!(" {} ", name.to_uppercase()).on_cyan().white().bold());
+            let data = job.get("data").cloned().unwrap_or_default();
+            let text = match &data {
+                serde_json::Value::String(s) => s.clone(),
+                other => serde_json::to_string_pretty(other).unwrap_or_default(),
+            };
+            for line in text.lines().take(30) {
+                println!("      {}", line.dimmed());
+            }
         }
+        println!();
+    }
+}
 
-        if truncated {
-            println!(
-                "    {} ({} more lines, use {} to see full output)",
-                "...".dimmed(),
-                lines.len() - max_lines,
-                "--json".cyan(),
-            );
+fn print_observations(r: &serde_json::Value) {
+    let Some(groups) = r.get("observations").and_then(|o| o.as_object()) else { return };
+    if groups.is_empty() {
+        return;
+    }
+    println!("  {}", "Indicators".bold().underline());
+    for (kind, entries) in groups {
+        let Some(list) = entries.as_array() else { continue };
+        println!("    {} ({})", kind.bold(), list.len());
+        for entry in list.iter().take(20) {
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            let tool = entry.get("tool").and_then(|t| t.as_str()).unwrap_or("");
+            println!("      {} {}  {}", "•".dimmed(), value, tool.dimmed());
         }
-
-        if i < r.analysis.len() - 1 {
-            println!("  {}", "· · ·".dimmed());
+        if list.len() > 20 {
+            println!("      {}", format!("… {} more", list.len() - 20).dimmed());
         }
     }
-
     println!();
-    println!("{}", div.dimmed());
+}
+
+fn print_sightings(r: &serde_json::Value) {
+    let Some(list) = r.get("sightings").and_then(|s| s.as_array()) else { return };
+    if list.is_empty() {
+        return;
+    }
+    // Distribution URLs and lure names: live malicious values, shown as text and
+    // never dressed up as something to click.
+    println!("  {}", "Sightings".bold().underline());
+    for s in list.iter().take(20) {
+        println!(
+            "    {:<12} {}",
+            s.get("kind").and_then(|k| k.as_str()).unwrap_or("-").dimmed(),
+            s.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+    }
     println!();
 }
 
@@ -506,3 +611,4 @@ fn progress_bar(done: u32, total: u32, width: usize) -> String {
 
     format!("{}{}", color_bar, "░".repeat(empty).dimmed())
 }
+

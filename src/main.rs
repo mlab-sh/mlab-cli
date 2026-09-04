@@ -92,6 +92,35 @@ enum Commands {
         action: CveAction,
     },
 
+    /// Extract indicators of compromise from text
+    Ioc {
+        /// File to read, or `-` for stdin
+        #[arg(default_value = "-")]
+        source: String,
+
+        /// Country pack for smishing keywords (e.g. fr, uk)
+        #[arg(long)]
+        country: Option<String>,
+
+        /// Risk scoring: fast (local) or deep (network)
+        #[arg(long, value_parser = ["fast", "deep"])]
+        risk: Option<String>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Capture the network requests a page makes
+    Network {
+        /// URL to load
+        url: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Check scan quotas
     Limits {
         /// Limit type: domain, ip, file, or crypto (omit to show all)
@@ -133,18 +162,82 @@ enum ScanTarget {
         /// Path to the file
         path: String,
 
+        /// Wait for the analysis to finish and print the report
+        #[arg(long)]
+        follow: bool,
+
         /// Output raw JSON
         #[arg(long)]
         json: bool,
     },
-    /// Lookup a cryptocurrency address
+    /// Lookup one or more cryptocurrency addresses
     Crypto {
-        /// Wallet/contract address
-        address: String,
+        /// Wallet/contract addresses (more than one switches to the bulk endpoint)
+        #[arg(required = true)]
+        addresses: Vec<String>,
 
         /// Blockchain (e.g. eth, btc). Omit to let the API detect it from the address.
         #[arg(long)]
         chain: Option<String>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Analyse a URL (structure, host reputation, optional redirect chain)
+    Url {
+        /// URL to analyse
+        url: String,
+
+        /// Follow the link to resolve redirects (off by default: it fetches the target)
+        #[arg(long)]
+        resolve: bool,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Look up one or more file hashes (SHA-1, SHA-256, MD5)
+    Hash {
+        /// Digests (more than one switches to the bulk endpoint)
+        #[arg(required = true)]
+        hashes: Vec<String>,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Look up an email address
+    Email {
+        /// Address to inspect
+        email: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Look up a phone number
+    Phone {
+        /// Number, ideally in E.164 form (+33...)
+        number: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Look up a MAC address
+    Mac {
+        /// MAC address in any common notation
+        mac: String,
+
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Analyse a shell script for suspicious patterns and indicators
+    Bash {
+        /// Path to the script, or `-` for stdin
+        path: String,
 
         /// Output raw JSON
         #[arg(long)]
@@ -240,6 +333,10 @@ enum ResultsTarget {
     File {
         /// SHA256 hash from the upload response
         sha256: String,
+
+        /// Print one tool's raw output instead of the summary
+        #[arg(long, value_name = "NAME")]
+        tool: Option<String>,
     },
 }
 
@@ -271,8 +368,14 @@ fn main() {
             match target {
                 ScanTarget::Domain { domain, no_follow, json } => commands::scan::domain(&client, domain, *no_follow, *json),
                 ScanTarget::Ip { ip, json } => commands::scan::ip(&client, ip, *json),
-                ScanTarget::File { path, json } => commands::scan::file(&client, path, *json),
-                ScanTarget::Crypto { address, chain, json } => commands::scan::crypto(&client, address, chain.as_deref(), *json),
+                ScanTarget::File { path, follow, json } => commands::scan::file(&client, path, *follow, *json),
+                ScanTarget::Crypto { addresses, chain, json } => commands::scan::crypto(&client, addresses, chain.as_deref(), *json),
+                ScanTarget::Url { url, resolve, json } => commands::lookup::url(&client, url, *resolve, *json),
+                ScanTarget::Hash { hashes, json } => commands::lookup::hash(&client, hashes, *json),
+                ScanTarget::Email { email, json } => commands::lookup::email(&client, email, *json),
+                ScanTarget::Phone { number, json } => commands::lookup::phone(&client, number, *json),
+                ScanTarget::Mac { mac, json } => commands::lookup::mac(&client, mac, *json),
+                ScanTarget::Bash { path, json } => commands::lookup::bash(&client, path, *json),
             }
         }
         Commands::Status { target, json } => {
@@ -285,8 +388,18 @@ fn main() {
             let client = make_client(&cli);
             match target {
                 ResultsTarget::Domain { domain } => commands::results::domain(&client, domain, *json),
-                ResultsTarget::File { sha256 } => commands::results::file(&client, sha256, *json),
+                ResultsTarget::File { sha256, tool } => {
+                    commands::results::file(&client, sha256, tool.as_deref(), *json)
+                }
             }
+        }
+        Commands::Ioc { source, country, risk, json } => {
+            let client = make_client(&cli);
+            commands::lookup::ioc(&client, source, country.as_deref(), risk.as_deref(), *json);
+        }
+        Commands::Network { url, json } => {
+            let client = make_client(&cli);
+            commands::lookup::network(&client, url, *json);
         }
         Commands::Ssl { domain, json } => {
             let client = make_client(&cli);

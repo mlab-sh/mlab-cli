@@ -5,6 +5,7 @@ pub mod status;
 pub mod results;
 pub mod ssl;
 pub mod limits;
+pub mod lookup;
 pub mod cve;
 
 use reqwest::blocking::Response;

@@ -368,7 +368,12 @@ fn country_flag(cc: &str) -> String {
 //  Crypto lookup
 // ═══════════════════════════════════════════════════════════════════
 
-pub fn crypto(client: &MlabClient, address: &str, chain: Option<&str>, json: bool) {
+pub fn crypto(client: &MlabClient, addresses: &[String], chain: Option<&str>, json: bool) {
+    if addresses.len() > 1 {
+        return crate::commands::lookup::bulk_crypto(client, addresses, chain, json);
+    }
+    let address = addresses[0].as_str();
+
     // An explicit `chain` short-circuits the API's address classification, so
     // only send one when the user actually named it — otherwise a BTC address
     // would be looked up on whatever default we hardcoded.
@@ -429,7 +434,7 @@ pub fn crypto(client: &MlabClient, address: &str, chain: Option<&str>, json: boo
 //  File upload
 // ═══════════════════════════════════════════════════════════════════
 
-pub fn file(client: &MlabClient, path: &str, json: bool) {
+pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
     let file_path = Path::new(path);
     if !file_path.exists() {
         ApiError {
@@ -448,7 +453,11 @@ pub fn file(client: &MlabClient, path: &str, json: bool) {
     }
 
     let v: serde_json::Value = parse_or_exit(&body, "upload");
-    let sha256 = v.get("sha256").and_then(|s| s.as_str()).unwrap_or("");
+    let sha256 = v
+        .get("sha256")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
 
     println!();
     println!("  {} {}", "✔".green().bold(), "File uploaded".bold());
@@ -457,13 +466,93 @@ pub fn file(client: &MlabClient, path: &str, json: bool) {
     }
     if !sha256.is_empty() {
         println!("  {:<10} {}", "SHA256:".dimmed(), sha256.cyan());
-        println!();
-        println!(
-            "  {}",
-            format!("Results: mlab results file {sha256}").dimmed()
-        );
     }
     println!();
+
+    if !follow {
+        if !sha256.is_empty() {
+            println!(
+                "  {}",
+                format!("Results: mlab results file {sha256}").dimmed()
+            );
+            println!();
+        }
+        return;
+    }
+
+    if sha256.is_empty() {
+        ApiError::new(None, "the upload returned no hash to follow.").report();
+    }
+
+    follow_file(client, &sha256, json);
+}
+
+/// Poll the analysis to completion, the way `scan domain` does. `partial` and
+/// `failed` are terminal too — waiting past them would never end.
+fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
+    let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let mut frame_idx = 0;
+    let start = Instant::now();
+    let mut consecutive_errors = 0u32;
+
+    loop {
+        let spinner = spinner_frames[frame_idx % spinner_frames.len()];
+        frame_idx += 1;
+
+        let raw = crate::commands::body(client.get(&format!(
+            "/scan/file/results?sha256={}",
+            urlencode(sha256)
+        )));
+
+        let status = match raw {
+            Ok(b) => {
+                consecutive_errors = 0;
+                serde_json::from_str::<serde_json::Value>(&b)
+                    .ok()
+                    .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
+                    .unwrap_or_else(|| "pending".to_string())
+            }
+            // 404 simply means the analysis has not produced a record yet.
+            Err(e) if e.kind == ErrorKind::NotFound => "pending".to_string(),
+            Err(e) if e.kind == ErrorKind::Other => {
+                consecutive_errors += 1;
+                if consecutive_errors >= 5 {
+                    clear_spinner();
+                    e.report();
+                }
+                "pending".to_string()
+            }
+            Err(e) => {
+                clear_spinner();
+                e.report();
+            }
+        };
+
+        if matches!(status.as_str(), "completed" | "partial" | "failed") {
+            clear_spinner();
+            break;
+        }
+
+        if start.elapsed() >= MAX_WAIT {
+            clear_spinner();
+            ApiError::new(
+                None,
+                format!("gave up after {}s (last status: {status})", start.elapsed().as_secs()),
+            )
+            .report();
+        }
+
+        print!(
+            "\r  {} {}  {} elapsed    ",
+            spinner.cyan(),
+            status.cyan(),
+            format!("{}s", start.elapsed().as_secs()).dimmed()
+        );
+        io::stdout().flush().ok();
+        thread::sleep(Duration::from_secs(3));
+    }
+
+    crate::commands::results::file(client, sha256, None, json);
 }
 
 #[cfg(test)]

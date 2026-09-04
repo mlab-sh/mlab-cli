@@ -105,6 +105,39 @@ retried on transport blips and 5xx, and a `429` with a short `Retry-After` is
 honoured; a scan launch is never replayed, so a retry cannot spend your quota
 twice.
 
+### `mlab scan` — lookups
+
+| Sub-command | Endpoint | Description |
+|---|---|---|
+| `scan url <url>` | `GET /api/v1/scan/url` | URL structure, host reputation, lookalike detection. `--resolve` follows redirects (off by default: it fetches the target) |
+| `scan hash <h...>` | `GET`/`POST /api/v1/scan/hash` | Reputation for SHA-1/SHA-256/MD5. More than one digest switches to the bulk endpoint |
+| `scan email <addr>` | `GET /api/v1/scan/email` | Mailbox type, disposable/role detection, sending-domain posture |
+| `scan phone <num>` | `GET /api/v1/scan/phone` | Validity, region, line type, operator |
+| `scan mac <mac>` | `GET /api/v1/scan/mac` | Vendor/OUI, randomization, virtualization |
+| `scan bash <file>` | `POST /api/v1/scan/file/bash` | Shell-script analysis: suspicious patterns and extracted indicators |
+| `scan crypto <a...>` | `GET`/`POST /api/v1/scan/crypto` | More than one address switches to the bulk endpoint |
+
+### `mlab ioc` — pull indicators out of text
+
+```bash
+cat incident-report.txt | mlab ioc
+mlab ioc report.txt --country fr --risk deep
+mlab ioc - --json | jq '.iocs.ipv4[].value'
+```
+
+Reads stdin by default, which is the point: pipe an email, a log or a report at
+it and get the indicators back grouped by kind. `--risk fast` scores locally,
+`--risk deep` adds network checks.
+
+### `mlab network` — capture a page's requests
+
+```bash
+mlab network https://example.com
+```
+
+Loads the URL in an instrumented browser and lists every request it makes, with
+status, resource type, size and failures.
+
 ### `mlab status` — check progress
 
 ```bash
@@ -117,7 +150,11 @@ mlab status domain example.com --json
 ```bash
 mlab results domain example.com
 mlab results file <sha256>
+mlab results file <sha256> --tool strings   # one tool's raw output
 ```
+
+`scan file --follow` uploads, waits for the analysis and prints the report in one
+go, the way `scan domain` does.
 
 ### `mlab ssl` — SSL certificate details
 
