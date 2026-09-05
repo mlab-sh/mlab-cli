@@ -1,26 +1,26 @@
 class Mlab < Formula
   desc "CLI client for the mlab.sh threat intelligence and CVE APIs"
   homepage "https://github.com/mlab-sh/mlab-cli"
-  version "1.0.2"
+  version "1.0.3"
   license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "7b59a301a04ade3b2c6f44408a0692830a58c3b21d715341515e6989e44f955e"
+      sha256 "f9fc1693b620269286158478d08282b0101f79082f55f45bd7b399e50f53ae26"
     else
       url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "7b9b3a1ed43769701aa13d46614c88339d12d6a2c06ad6b83618fa1dedb6c443"
+      sha256 "f704f0cc5344f026457a7f043a3827bd1b0a5bd1cb138dbce80debbd143fc3c2"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "45a63b0db801925e6eb371dd15966aafa5b12b75958dbb3bc46b92783ad484c3"
+      sha256 "47da7bc9fed4aa1ebc9fabc310a1e47bd0ce80be023e0a7d64cf1c1949ade38d"
     elsif Hardware::CPU.arm?
       url "https://github.com/mlab-sh/mlab-cli/releases/download/v#{version}/mlab-#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "5a1c31455d3b1f8ed3e0f401aa4b1656c086bc852a02c29062e2728762044758"
+      sha256 "f3662d0896c311a1e3c22aede141635320471a2f10eb72c0872ea17bc94d6154"
     end
   end
 
