@@ -1048,7 +1048,49 @@ mod tests {
     #[test]
     fn the_shipped_catalog_parses() {
         let catalog = parse_catalog(BUILTIN_CATALOG).expect("modules.json is valid");
-        assert!(catalog.find("unifi").is_some());
+        for name in ["unifi", "mikrotik", "proxmox"] {
+            assert!(catalog.find(name).is_some(), "{name} is missing");
+        }
+    }
+
+    /// The catalogue is data, and a typo in it only shows up when someone tries
+    /// to install. Check the invariants the installer relies on here instead.
+    #[test]
+    fn every_catalog_entry_is_installable() {
+        let catalog = parse_catalog(BUILTIN_CATALOG).unwrap();
+        for module in &catalog.modules {
+            assert!(
+                is_module_name(&module.name),
+                "{} is not a usable sub-command name",
+                module.name
+            );
+            assert_eq!(
+                module.binary,
+                format!("mlab-{}", module.name),
+                "{} must ship a binary named after it, or resolution will not find it",
+                module.name
+            );
+            assert!(
+                module.repo.starts_with("https://github.com/"),
+                "{} needs a GitHub repo to resolve releases from",
+                module.name
+            );
+            assert!(
+                module.slug().split('/').count() == 2,
+                "{} does not give an owner/repo slug",
+                module.name
+            );
+            assert!(
+                !module.description.is_empty(),
+                "{} has no description to show in `module available`",
+                module.name
+            );
+            assert!(
+                module.targets.iter().any(|t| t == "aarch64-apple-darwin"),
+                "{} publishes no aarch64-apple-darwin build",
+                module.name
+            );
+        }
     }
 
     #[test]
@@ -1064,12 +1106,18 @@ mod tests {
     #[test]
     fn asset_names_follow_the_release_layout() {
         let catalog = parse_catalog(BUILTIN_CATALOG).unwrap();
-        let unifi = catalog.find("unifi").unwrap();
-        assert_eq!(
-            unifi.asset_name("1.0.0", "aarch64-apple-darwin"),
-            "mlab-unifi-1.0.0-aarch64-apple-darwin.tar.gz"
-        );
-        assert_eq!(unifi.slug(), "mlab-sh/mlab-unifi");
+        for (name, asset) in [
+            ("unifi", "mlab-unifi-1.0.0-aarch64-apple-darwin.tar.gz"),
+            (
+                "mikrotik",
+                "mlab-mikrotik-1.0.0-aarch64-apple-darwin.tar.gz",
+            ),
+            ("proxmox", "mlab-proxmox-1.0.0-aarch64-apple-darwin.tar.gz"),
+        ] {
+            let module = catalog.find(name).unwrap();
+            assert_eq!(module.asset_name("1.0.0", "aarch64-apple-darwin"), asset);
+            assert_eq!(module.slug(), format!("mlab-sh/mlab-{name}"));
+        }
     }
 
     #[test]

@@ -12,6 +12,30 @@
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu"
       ]
+    },
+    {
+      "name": "mikrotik",
+      "binary": "mlab-mikrotik",
+      "repo": "https://github.com/mlab-sh/mlab-mikrotik",
+      "description": "Audit MikroTik routers over the RouterOS REST API",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ]
+    },
+    {
+      "name": "proxmox",
+      "binary": "mlab-proxmox",
+      "repo": "https://github.com/mlab-sh/mlab-proxmox",
+      "description": "Audit Proxmox VE clusters over the REST API, read-only",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ]
     }
   ]
 }
