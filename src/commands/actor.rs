@@ -7,10 +7,10 @@
 use colored::Colorize;
 use serde_json::Value;
 
-use crate::output;
 use crate::client::HostClient;
 use crate::commands::{parse_or_exit, print_json, vuln_body};
 use crate::error::{ApiError, ErrorKind};
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -63,7 +63,11 @@ pub fn list(client: &HostClient, filters: &ListFilters, json: bool) {
     }
 
     let v: Value = parse_or_exit(&body, "actors");
-    let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let items = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     if output::wants_csv() {
         let rows: Vec<Vec<String>> = items
@@ -80,7 +84,14 @@ pub fn list(client: &HostClient, filters: &ListFilters, json: bool) {
             })
             .collect();
         return output::csv_table(
-            &["slug", "name", "origin", "motivation", "sectors", "countries"],
+            &[
+                "slug",
+                "name",
+                "origin",
+                "motivation",
+                "sectors",
+                "countries",
+            ],
             &rows,
         );
     }
@@ -90,7 +101,7 @@ pub fn list(client: &HostClient, filters: &ListFilters, json: bool) {
     let limit = v.get("limit").and_then(|l| l.as_u64()).unwrap_or(0);
 
     println!();
-    println!("  {} {}", "🎭", "Threat Actors".bold());
+    println!("  🎭 {}", "Threat Actors".bold());
     println!("{}", divider(96));
     println!(
         "  {:<14} {} of {}",
@@ -129,7 +140,11 @@ pub fn list(client: &HostClient, filters: &ListFilters, json: bool) {
     if offset + (items.len() as u64) < total {
         println!(
             "  {}",
-            format!("More actors — rerun with --offset {}", offset + limit.max(items.len() as u64)).dimmed()
+            format!(
+                "More actors — rerun with --offset {}",
+                offset + limit.max(items.len() as u64)
+            )
+            .dimmed()
         );
     }
     println!("  {}", ATTRIBUTION.dimmed());
@@ -151,20 +166,27 @@ pub fn get(client: &HostClient, slug: &str, json: bool) {
 
     println!();
     println!(
-        "  {} {}  {}",
-        "🎭",
+        "  🎭 {}  {}",
         text(&actor, "primary_name").bold(),
         text(&actor, "slug").cyan()
     );
     println!("{}", divider(84));
 
-    for (label, key) in [("Origin", "suspected_origin"), ("First seen", "first_seen"), ("TLP", "tlp")] {
+    for (label, key) in [
+        ("Origin", "suspected_origin"),
+        ("First seen", "first_seen"),
+        ("TLP", "tlp"),
+    ] {
         let value = text(&actor, key);
         if !value.is_empty() {
             println!("  {:<16} {}", format!("{label}:").dimmed(), value);
         }
     }
-    for (label, key) in [("Motivation", "motivation"), ("Sectors", "targets_sectors"), ("Countries", "targets_countries")] {
+    for (label, key) in [
+        ("Motivation", "motivation"),
+        ("Sectors", "targets_sectors"),
+        ("Countries", "targets_countries"),
+    ] {
         let value = join(&actor, key);
         if !value.is_empty() {
             println!("  {:<16} {}", format!("{label}:").dimmed(), value);
@@ -174,7 +196,7 @@ pub fn get(client: &HostClient, slug: &str, json: bool) {
     let description = text(&actor, "description");
     if !description.is_empty() {
         println!();
-        for line in wrap(&description, 78) {
+        for line in wrap(description, 78) {
             println!("  {line}");
         }
     }
@@ -185,13 +207,22 @@ pub fn get(client: &HostClient, slug: &str, json: bool) {
         other => text(other, "cve_id").to_string(),
     });
     section_rows(&v, "tools", "Tools & Malware", |t| {
-        (text(t, "mitre_id").to_string(), format!("{}  {}", text(t, "name"), text(t, "kind").dimmed()))
+        (
+            text(t, "mitre_id").to_string(),
+            format!("{}  {}", text(t, "name"), text(t, "kind").dimmed()),
+        )
     });
     section_rows(&v, "techniques", "Techniques", |t| {
-        (text(t, "mitre_id").to_string(), format!("{}  {}", text(t, "name"), text(t, "tactic").dimmed()))
+        (
+            text(t, "mitre_id").to_string(),
+            format!("{}  {}", text(t, "name"), text(t, "tactic").dimmed()),
+        )
     });
     section_rows(&v, "references", "References", |r| {
-        (String::new(), format!("{}  {}", text(r, "title"), text(r, "url").dimmed()))
+        (
+            String::new(),
+            format!("{}  {}", text(r, "title"), text(r, "url").dimmed()),
+        )
     });
 
     println!("{}", divider(84));
@@ -211,15 +242,22 @@ pub fn by_cve(client: &HostClient, cve: &str, json: bool) {
     }
 
     let v: Value = parse_or_exit(&body, "actors");
-    let actors = v.get("actors").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    let actors = v
+        .get("actors")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     println!();
-    println!("  {} Actors exploiting {}", "🎭", cve.cyan().bold());
+    println!("  🎭 Actors exploiting {}", cve.cyan().bold());
     println!("{}", divider(84));
 
     if actors.is_empty() {
         // Nobody documented is not the same as nobody exploiting it.
-        println!("  {}", "No actor is documented exploiting this CVE.".dimmed());
+        println!(
+            "  {}",
+            "No actor is documented exploiting this CVE.".dimmed()
+        );
     } else {
         for actor in &actors {
             println!(
@@ -294,8 +332,14 @@ fn origin_of(actor: &Value) -> String {
 }
 
 fn section_list(v: &Value, key: &str, title: &str, render: impl Fn(&Value) -> String) {
-    let Some(items) = v.get(key).and_then(|x| x.as_array()) else { return };
-    let values: Vec<String> = items.iter().map(&render).filter(|s| !s.is_empty()).collect();
+    let Some(items) = v.get(key).and_then(|x| x.as_array()) else {
+        return;
+    };
+    let values: Vec<String> = items
+        .iter()
+        .map(&render)
+        .filter(|s| !s.is_empty())
+        .collect();
     if values.is_empty() {
         return;
     }
@@ -307,7 +351,9 @@ fn section_list(v: &Value, key: &str, title: &str, render: impl Fn(&Value) -> St
 }
 
 fn section_rows(v: &Value, key: &str, title: &str, render: impl Fn(&Value) -> (String, String)) {
-    let Some(items) = v.get(key).and_then(|x| x.as_array()) else { return };
+    let Some(items) = v.get(key).and_then(|x| x.as_array()) else {
+        return;
+    };
     if items.is_empty() {
         return;
     }
@@ -330,7 +376,10 @@ fn truncate(s: &str, width: usize) -> String {
     if s.chars().count() <= width {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(width.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(width.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -358,7 +407,9 @@ pub fn validate_cve(id: &str) -> String {
     let upper = id.trim().to_uppercase();
     let rest = upper.strip_prefix("CVE-").unwrap_or("");
     let mut parts = rest.split('-');
-    let year_ok = parts.next().map(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()));
+    let year_ok = parts
+        .next()
+        .map(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()));
     let seq_ok = parts
         .next()
         .map(|n| (4..=7).contains(&n.len()) && n.chars().all(|c| c.is_ascii_digit()));
@@ -399,13 +450,19 @@ mod tests {
     fn descriptions_wrap_on_word_boundaries() {
         let lines = wrap("the quick brown fox jumps over the lazy dog", 12);
         assert!(lines.iter().all(|l| l.chars().count() <= 12), "{lines:?}");
-        assert_eq!(lines.join(" "), "the quick brown fox jumps over the lazy dog");
+        assert_eq!(
+            lines.join(" "),
+            "the quick brown fox jumps over the lazy dog"
+        );
     }
 
     #[test]
     fn wrapping_handles_empty_and_oversized_words() {
         assert!(wrap("", 10).is_empty());
-        assert_eq!(wrap("supercalifragilistic", 5), vec!["supercalifragilistic"]);
+        assert_eq!(
+            wrap("supercalifragilistic", 5),
+            vec!["supercalifragilistic"]
+        );
     }
 
     #[test]

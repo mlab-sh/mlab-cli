@@ -43,9 +43,13 @@ impl ErrorKind {
 
     pub fn hint(self) -> Option<&'static str> {
         match self {
-            ErrorKind::Auth => Some("Check your key with `mlab whoami`, or set a new one with `mlab login`."),
+            ErrorKind::Auth => {
+                Some("Check your key with `mlab whoami`, or set a new one with `mlab login`.")
+            }
             ErrorKind::Quota => Some("See what is left with `mlab limits`."),
-            ErrorKind::Maintenance => Some("The platform is in maintenance — retry in a few minutes."),
+            ErrorKind::Maintenance => {
+                Some("The platform is in maintenance — retry in a few minutes.")
+            }
             _ => None,
         }
     }
@@ -62,12 +66,20 @@ impl ApiError {
     pub fn new(status: Option<u16>, message: impl Into<String>) -> Self {
         let message = message.into();
         let kind = classify(status, &message);
-        Self { status, message, kind }
+        Self {
+            status,
+            message,
+            kind,
+        }
     }
 
     /// Something went wrong before an HTTP status existed (DNS, TLS, timeout).
     pub fn transport(e: impl Display) -> Self {
-        Self { status: None, message: e.to_string(), kind: ErrorKind::Other }
+        Self {
+            status: None,
+            message: e.to_string(),
+            kind: ErrorKind::Other,
+        }
     }
 
     pub fn from_response(status: u16, body: &str) -> Self {
@@ -81,7 +93,9 @@ impl ApiError {
         // The status is redundant once the message says what went wrong, so it
         // is only shown when the server gave us nothing better to print.
         match self.status {
-            Some(code) if self.kind == ErrorKind::Other && self.message == format!("HTTP {code}") => {
+            Some(code)
+                if self.kind == ErrorKind::Other && self.message == format!("HTTP {code}") =>
+            {
                 eprintln!("{} the API answered HTTP {code}", "error:".red().bold())
             }
             _ => eprintln!("{} {}", "error:".red().bold(), self.message),
@@ -160,7 +174,10 @@ mod tests {
 
     #[test]
     fn quota_refusals_arrive_as_400_and_must_not_look_like_bad_input() {
-        let e = ApiError::from_response(400, r#"{"error":"Scan limit reached. Please try again later."}"#);
+        let e = ApiError::from_response(
+            400,
+            r#"{"error":"Scan limit reached. Please try again later."}"#,
+        );
         assert_eq!(e.kind, ErrorKind::Quota);
         assert_eq!(e.kind.exit_code(), EXIT_QUOTA);
         assert!(e.message.contains("Scan limit reached"));
@@ -168,7 +185,10 @@ mod tests {
 
     #[test]
     fn maintenance_is_its_own_outcome() {
-        let e = ApiError::from_response(400, r#"{"error":"Service temporarily unavailable for maintenance. Please try again later."}"#);
+        let e = ApiError::from_response(
+            400,
+            r#"{"error":"Service temporarily unavailable for maintenance. Please try again later."}"#,
+        );
         assert_eq!(e.kind, ErrorKind::Maintenance);
         assert_eq!(e.kind.exit_code(), EXIT_MAINTENANCE);
     }
@@ -180,7 +200,8 @@ mod tests {
             ErrorKind::Input
         );
         assert_eq!(
-            ApiError::from_response(400, r#"{"error":"No scan found for the provided domain."}"#).kind,
+            ApiError::from_response(400, r#"{"error":"No scan found for the provided domain."}"#)
+                .kind,
             ErrorKind::NotFound
         );
     }
@@ -196,9 +217,15 @@ mod tests {
 
     #[test]
     fn transport_and_status_codes_map_to_auth_and_rate_limits() {
-        assert_eq!(ApiError::from_response(401, r#"{"error":"Unauthorized"}"#).kind, ErrorKind::Auth);
+        assert_eq!(
+            ApiError::from_response(401, r#"{"error":"Unauthorized"}"#).kind,
+            ErrorKind::Auth
+        );
         assert_eq!(ApiError::from_response(429, "{}").kind, ErrorKind::Quota);
-        assert_eq!(ApiError::transport("connection refused").kind, ErrorKind::Other);
+        assert_eq!(
+            ApiError::transport("connection refused").kind,
+            ErrorKind::Other
+        );
     }
 
     #[test]
@@ -206,7 +233,10 @@ mod tests {
         assert_eq!(extract_message(500, ""), "HTTP 500");
         assert_eq!(extract_message(502, "upstream is down"), "upstream is down");
         assert_eq!(extract_message(400, r#"{"detail":"nope"}"#), "HTTP 400");
-        assert_eq!(extract_message(400, r#"{"message":"try later"}"#), "try later");
+        assert_eq!(
+            extract_message(400, r#"{"message":"try later"}"#),
+            "try later"
+        );
     }
 
     #[test]

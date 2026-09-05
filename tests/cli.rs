@@ -31,14 +31,21 @@ fn whoami_rejects_a_key_the_api_answers_200_for() {
     // The API greets unknown keys with a 200 and a generic message, so the
     // status code alone cannot be trusted to mean "authenticated".
     let server = TestServer::start(|req| match req.route_path() {
-        "/api/v1/" => json(r#"{"message":"Hello! Please authenticate with an API key or session."}"#),
+        "/api/v1/" => {
+            json(r#"{"message":"Hello! Please authenticate with an API key or session."}"#)
+        }
         _ => not_found(),
     });
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["whoami"]);
 
-    assert_eq!(out.status.code(), Some(EXIT_AUTH), "stdout: {}", stdout(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_AUTH),
+        "stdout: {}",
+        stdout(&out)
+    );
     assert!(stderr(&out).to_lowercase().contains("not recognized"));
 }
 
@@ -97,7 +104,11 @@ fn an_unreadable_file_is_an_error_not_a_panic() {
     let out = mlab(&home, &["scan", "file", "/nonexistent/nothing.bin"]);
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
-    assert!(!stderr(&out).contains("panicked"), "stderr: {}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("panicked"),
+        "stderr: {}",
+        stderr(&out)
+    );
     assert!(server.requests().is_empty());
 }
 
@@ -120,7 +131,11 @@ fn limits_render_remaining_against_the_total() {
     let out = mlab(&home, &["limits", "domain"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("98 / 100"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("98 / 100"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -158,7 +173,11 @@ fn limits_surface_the_api_error_and_fail() {
     let out = mlab(&home, &["limits", "domain"]);
 
     assert_eq!(out.status.code(), Some(EXIT_AUTH));
-    assert!(stderr(&out).contains("Unauthorized"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Unauthorized"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -247,7 +266,10 @@ fn domain_scan_follows_to_completion_and_renders_the_report() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let rendered = stdout(&out);
-    assert!(rendered.contains("Domain Scan Results"), "stdout: {rendered}");
+    assert!(
+        rendered.contains("Domain Scan Results"),
+        "stdout: {rendered}"
+    );
     assert!(rendered.contains("www.example.com"));
     assert!(rendered.contains("admin.example.com"));
 }
@@ -259,7 +281,12 @@ fn domain_scan_stops_when_the_scan_fails() {
 
     let out = mlab(&home, &["scan", "domain", "example.com"]);
 
-    assert_eq!(out.status.code(), Some(EXIT_ERROR), "stdout: {}", stdout(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_ERROR),
+        "stdout: {}",
+        stdout(&out)
+    );
     assert!(stderr(&out).contains("failed"), "stderr: {}", stderr(&out));
     // It must give up rather than poll a dead scan until the timeout.
     let polls = server
@@ -282,14 +309,20 @@ fn domain_scan_stops_on_a_client_error_while_polling() {
     let out = mlab(&home, &["scan", "domain", "example.com"]);
 
     assert_eq!(out.status.code(), Some(EXIT_AUTH));
-    assert!(stderr(&out).contains("Unauthorized"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Unauthorized"),
+        "stderr: {}",
+        stderr(&out)
+    );
     assert!(stderr(&out).contains("mlab results domain example.com"));
 }
 
 #[test]
 fn domain_scan_reports_a_rejected_launch_without_polling() {
     let server = TestServer::start(|req| match (req.method.as_str(), req.route_path()) {
-        ("POST", "/api/v1/scan/domain") => error(400, "Scan limit reached. Please try again later."),
+        ("POST", "/api/v1/scan/domain") => {
+            error(400, "Scan limit reached. Please try again later.")
+        }
         _ => not_found(),
     });
     let home = TempHome::new(&server.url);
@@ -297,7 +330,11 @@ fn domain_scan_reports_a_rejected_launch_without_polling() {
     let out = mlab(&home, &["scan", "domain", "example.com"]);
 
     assert_eq!(out.status.code(), Some(EXIT_QUOTA));
-    assert!(stderr(&out).contains("Scan limit reached"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Scan limit reached"),
+        "stderr: {}",
+        stderr(&out)
+    );
     assert_eq!(server.routes(), vec!["POST /api/v1/scan/domain"]);
 }
 
@@ -325,7 +362,11 @@ fn results_warn_when_a_completed_scan_carries_no_data() {
 
     let out = mlab(&home, &["results", "domain", "example.com"]);
 
-    assert!(stderr(&out).contains("Empty report"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Empty report"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -427,7 +468,9 @@ fn ip_lookup_renders_network_and_location() {
 #[test]
 fn a_reserved_ip_is_labelled_rather_than_geolocated() {
     let server = TestServer::start(|_| {
-        json(r#"{"ip":"10.0.0.1","reserved":true,"type":"Private","range":"10.0.0.0/8","rfc":"RFC1918"}"#)
+        json(
+            r#"{"ip":"10.0.0.1","reserved":true,"type":"Private","range":"10.0.0.0/8","rfc":"RFC1918"}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
@@ -478,11 +521,21 @@ fn cve_detail_requests_the_identifier_path() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "cve", "detail", "CVE-2024-3094", "--json"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "cve",
+            "detail",
+            "CVE-2024-3094",
+            "--json",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/cve/CVE-2024-3094");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/cve/CVE-2024-3094"
+    );
 }
 
 #[test]
@@ -506,7 +559,10 @@ fn cve_commands_need_no_api_key() {
 #[test]
 fn maintenance_is_reported_as_maintenance() {
     let server = TestServer::start(|_| {
-        error(400, "Service temporarily unavailable for maintenance. Please try again later.")
+        error(
+            400,
+            "Service temporarily unavailable for maintenance. Please try again later.",
+        )
     });
     let home = TempHome::new(&server.url);
 
@@ -521,12 +577,22 @@ fn malformed_input_and_a_missing_record_get_different_codes() {
     let invalid = TestServer::start(|_| error(400, "Provided domain is invalid."));
     let home = TempHome::new(&invalid.url);
     let out = mlab(&home, &["results", "domain", "nope"]);
-    assert_eq!(out.status.code(), Some(EXIT_INPUT), "stderr: {}", stderr(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_INPUT),
+        "stderr: {}",
+        stderr(&out)
+    );
 
     let missing = TestServer::start(|_| error(400, "No scan found for the provided domain."));
     let home = TempHome::new(&missing.url);
     let out = mlab(&home, &["results", "domain", "example.com"]);
-    assert_eq!(out.status.code(), Some(EXIT_NOT_FOUND), "stderr: {}", stderr(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_NOT_FOUND),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -537,7 +603,11 @@ fn an_error_message_is_shown_instead_of_the_raw_json() {
     let out = mlab(&home, &["results", "domain", "nope"]);
 
     assert!(stderr(&out).contains("Provided domain is invalid."));
-    assert!(!stderr(&out).contains(r#""error""#), "raw JSON leaked: {}", stderr(&out));
+    assert!(
+        !stderr(&out).contains(r#""error""#),
+        "raw JSON leaked: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -548,7 +618,11 @@ fn an_auth_failure_points_at_the_command_that_fixes_it() {
     let out = mlab(&home, &["scan", "ip", "8.8.8.8"]);
 
     assert_eq!(out.status.code(), Some(EXIT_AUTH));
-    assert!(stderr(&out).contains("mlab login"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("mlab login"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 // ── Transport resilience ──────────────────────────────────────────────────
@@ -658,7 +732,10 @@ fn status_renders_a_badge_instead_of_dumping_json() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let rendered = stdout(&out);
     assert!(rendered.contains("scanning"), "stdout: {rendered}");
-    assert!(!rendered.contains(r#""status""#), "raw JSON leaked: {rendered}");
+    assert!(
+        !rendered.contains(r#""status""#),
+        "raw JSON leaked: {rendered}"
+    );
 }
 
 #[test]
@@ -738,9 +815,15 @@ fn the_domain_report_shows_the_certificates_it_already_received() {
 
     let rendered = stdout(&out);
     assert!(rendered.contains("SSL Certificates"), "stdout: {rendered}");
-    assert!(rendered.contains("DigiCert Global CA G2"), "stdout: {rendered}");
+    assert!(
+        rendered.contains("DigiCert Global CA G2"),
+        "stdout: {rendered}"
+    );
     // And it no longer sends the user elsewhere for data already on screen.
-    assert!(!rendered.contains("are not shown here"), "stdout: {rendered}");
+    assert!(
+        !rendered.contains("are not shown here"),
+        "stdout: {rendered}"
+    );
 }
 
 // ── Upload rendering ──────────────────────────────────────────────────────
@@ -757,7 +840,11 @@ fn an_upload_tells_the_user_how_to_read_the_results() {
     let out = mlab(&home, &["scan", "file", sample.to_str().unwrap()]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("mlab results file deadbeef"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("mlab results file deadbeef"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 // ── Credentials ───────────────────────────────────────────────────────────
@@ -771,7 +858,10 @@ fn an_environment_variable_can_stand_in_for_the_stored_key() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("token mlab_from_env")
     );
 }
@@ -789,7 +879,10 @@ fn an_explicit_flag_outranks_both_the_file_and_the_environment() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("token mlab_from_flag")
     );
 }
@@ -799,7 +892,10 @@ fn login_verifies_the_key_before_writing_it_down() {
     let server = TestServer::start(|_| json(WHOAMI_OK));
     let home = TempHome::with_key(&server.url, "");
 
-    let out = mlab(&home, &["--hostname", &server.url, "login", "--key", "mlab_good"]);
+    let out = mlab(
+        &home,
+        &["--hostname", &server.url, "login", "--key", "mlab_good"],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(read_config(&home).contains("mlab_good"));
@@ -811,10 +907,17 @@ fn login_refuses_a_key_the_api_does_not_accept_and_saves_nothing() {
     let server = TestServer::start(|_| json(r#"{"message":"Hello! Please authenticate."}"#));
     let home = TempHome::with_key(&server.url, "");
 
-    let out = mlab(&home, &["--hostname", &server.url, "login", "--key", "mlab_bad"]);
+    let out = mlab(
+        &home,
+        &["--hostname", &server.url, "login", "--key", "mlab_bad"],
+    );
 
     assert_eq!(out.status.code(), Some(EXIT_AUTH));
-    assert!(!read_config(&home).contains("mlab_bad"), "config: {}", read_config(&home));
+    assert!(
+        !read_config(&home).contains("mlab_bad"),
+        "config: {}",
+        read_config(&home)
+    );
 }
 
 #[test]
@@ -838,7 +941,10 @@ fn the_saved_credential_is_not_world_readable() {
     let server = TestServer::start(|_| json(WHOAMI_OK));
     let home = TempHome::with_key(&server.url, "");
 
-    mlab(&home, &["--hostname", &server.url, "login", "--key", "mlab_good"]);
+    mlab(
+        &home,
+        &["--hostname", &server.url, "login", "--key", "mlab_good"],
+    );
 
     let mode = std::fs::metadata(home.path.join(".mlab").join("conf.yml"))
         .expect("config exists")
@@ -859,26 +965,46 @@ fn cve_search_forwards_every_filter_the_api_supports() {
     let out = mlab(
         &home,
         &[
-            "--cve-hostname", &server.url, "cve", "search", "openssl",
-            "--severity", "HIGH",
-            "--date-start", "2026-01-01",
-            "--date-end", "2026-06-30",
-            "--vendor", "redhat",
-            "--cwe", "CWE-79",
-            "--min-cvss", "7.5",
+            "--cve-hostname",
+            &server.url,
+            "cve",
+            "search",
+            "openssl",
+            "--severity",
+            "HIGH",
+            "--date-start",
+            "2026-01-01",
+            "--date-end",
+            "2026-06-30",
+            "--vendor",
+            "redhat",
+            "--cwe",
+            "CWE-79",
+            "--min-cvss",
+            "7.5",
             "--kev-only",
             "--exact",
-            "--page", "2",
-            "--limit", "50",
+            "--page",
+            "2",
+            "--limit",
+            "50",
         ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let path = &server.requests()[0].path;
     for expected in [
-        "q=openssl", "severity=HIGH", "dateStart=2026-01-01", "dateEnd=2026-06-30",
-        "vendor=redhat", "cwe=CWE-79", "minCvss=7.5", "kevOnly=1", "exact=1",
-        "page=2", "limit=50",
+        "q=openssl",
+        "severity=HIGH",
+        "dateStart=2026-01-01",
+        "dateEnd=2026-06-30",
+        "vendor=redhat",
+        "cwe=CWE-79",
+        "minCvss=7.5",
+        "kevOnly=1",
+        "exact=1",
+        "page=2",
+        "limit=50",
     ] {
         assert!(path.contains(expected), "missing {expected} in {path}");
     }
@@ -889,7 +1015,10 @@ fn cve_search_sends_only_the_filters_that_were_asked_for() {
     let server = TestServer::start(|_| json(EMPTY_SEARCH));
     let home = TempHome::new("https://unused.example");
 
-    mlab(&home, &["--cve-hostname", &server.url, "cve", "search", "openssl"]);
+    mlab(
+        &home,
+        &["--cve-hostname", &server.url, "cve", "search", "openssl"],
+    );
 
     let path = &server.requests()[0].path;
     assert_eq!(path, "/api/v1/cve?q=openssl", "path: {path}");
@@ -902,7 +1031,10 @@ fn cve_errors_hidden_inside_a_200_body_are_still_errors() {
     let server = TestServer::start(|_| json(r#"{"error":"package vulnerability lookup is busy"}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--cve-hostname", &server.url, "cve", "search", "npm/lodash"]);
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "cve", "search", "npm/lodash"],
+    );
 
     assert!(!out.status.success(), "stdout: {}", stdout(&out));
     assert!(stderr(&out).contains("busy"), "stderr: {}", stderr(&out));
@@ -919,9 +1051,16 @@ fn cve_search_says_when_there_are_more_pages() {
     });
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--cve-hostname", &server.url, "cve", "search", "x"]);
+    let out = mlab(
+        &home,
+        &["--cve-hostname", &server.url, "cve", "search", "x"],
+    );
 
-    assert!(stdout(&out).contains("--page 1"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("--page 1"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -932,7 +1071,11 @@ fn a_rate_limited_cve_call_reports_the_quota_reason() {
     let out = mlab(&home, &["--cve-hostname", &server.url, "cve", "latest"]);
 
     assert_eq!(out.status.code(), Some(EXIT_QUOTA));
-    assert!(stderr(&out).contains("rate limited"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("rate limited"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 // ── Single-value lookups ──────────────────────────────────────────────────
@@ -940,8 +1083,10 @@ fn a_rate_limited_cve_call_reports_the_quota_reason() {
 #[test]
 fn url_analysis_does_not_follow_the_link_unless_asked() {
     let server = TestServer::start(|_| {
-        json(r#"{"url":"https://a.test/x","scheme":"https","host":"a.test",
-                 "findings":[{"severity":"high","title":"Punycode host","detail":"looks like a lookalike"}]}"#)
+        json(
+            r#"{"url":"https://a.test/x","scheme":"https","host":"a.test",
+                 "findings":[{"severity":"high","title":"Punycode host","detail":"looks like a lookalike"}]}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
@@ -952,7 +1097,11 @@ fn url_analysis_does_not_follow_the_link_unless_asked() {
     assert!(path.starts_with("/api/v1/scan/url?url="), "path: {path}");
     // Fetching an attacker-chosen URL is opt-in.
     assert!(!path.contains("resolve"), "path: {path}");
-    assert!(stdout(&out).contains("Punycode host"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("Punycode host"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -970,10 +1119,22 @@ fn each_lookup_uses_the_parameter_name_its_endpoint_expects() {
     // These four differ (`email`, `number`, `mac`, `hash`); getting one wrong is
     // a 400 the user cannot explain.
     for (args, expected) in [
-        (vec!["scan", "email", "a@b.test"], "/api/v1/scan/email?email=a%40b.test"),
-        (vec!["scan", "phone", "+33612345678"], "/api/v1/scan/phone?number=%2B33612345678"),
-        (vec!["scan", "mac", "00:11:22:33:44:55"], "/api/v1/scan/mac?mac=00%3A11%3A22%3A33%3A44%3A55"),
-        (vec!["scan", "hash", "d41d8cd98f00b204e9800998ecf8427e"], "/api/v1/scan/hash?hash=d41d8cd98f00b204e9800998ecf8427e"),
+        (
+            vec!["scan", "email", "a@b.test"],
+            "/api/v1/scan/email?email=a%40b.test",
+        ),
+        (
+            vec!["scan", "phone", "+33612345678"],
+            "/api/v1/scan/phone?number=%2B33612345678",
+        ),
+        (
+            vec!["scan", "mac", "00:11:22:33:44:55"],
+            "/api/v1/scan/mac?mac=00%3A11%3A22%3A33%3A44%3A55",
+        ),
+        (
+            vec!["scan", "hash", "d41d8cd98f00b204e9800998ecf8427e"],
+            "/api/v1/scan/hash?hash=d41d8cd98f00b204e9800998ecf8427e",
+        ),
     ] {
         let server = TestServer::start(|_| json(r#"{"verdict":"clean"}"#));
         let home = TempHome::new(&server.url);
@@ -1004,7 +1165,10 @@ fn several_addresses_switch_to_the_bulk_crypto_endpoint() {
     let server = TestServer::start(|_| json(r#"{"count":2,"results":[],"invalid":[]}"#));
     let home = TempHome::new(&server.url);
 
-    let out = mlab(&home, &["scan", "crypto", "addr1", "addr2", "--chain", "eth"]);
+    let out = mlab(
+        &home,
+        &["scan", "crypto", "addr1", "addr2", "--chain", "eth"],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let request = &server.requests()[0];
@@ -1028,8 +1192,10 @@ fn a_single_address_still_uses_the_cheap_get() {
 fn a_bulk_answer_shows_the_rows_the_api_could_not_use() {
     // Dropping the rejected rows would silently lose half of what was pasted.
     let server = TestServer::start(|_| {
-        json(r#"{"count":1,"results":[{"hash":"aaa","verdict":"clean"}],
-                 "invalid":["not-a-hash"],"not_queryable":[{"hash":"bbb"}]}"#)
+        json(
+            r#"{"count":1,"results":[{"hash":"aaa","verdict":"clean"}],
+                 "invalid":["not-a-hash"],"not_queryable":[{"hash":"bbb"}]}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
@@ -1045,9 +1211,11 @@ fn a_bulk_answer_shows_the_rows_the_api_could_not_use() {
 #[test]
 fn ioc_extraction_reads_a_pipe() {
     let server = TestServer::start(|_| {
-        json(r#"{"status":"ok","ioc_total":2,"truncated":false,
+        json(
+            r#"{"status":"ok","ioc_total":2,"truncated":false,
                  "iocs":{"ipv4":[{"value":"8.8.8.8","link":"/ip/8.8.8.8"}],
-                         "domain":[{"value":"evil.test","link":"/domain/evil.test"}]}}"#)
+                         "domain":[{"value":"evil.test","link":"/domain/evil.test"}]}}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
@@ -1058,7 +1226,11 @@ fn ioc_extraction_reads_a_pipe() {
     assert_eq!(request.route(), "POST /api/v1/scan/ioc");
     let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
     assert!(body["text"].as_str().unwrap().contains("8.8.8.8"));
-    assert!(stdout(&out).contains("evil.test"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("evil.test"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1070,7 +1242,14 @@ fn ioc_extraction_reads_a_file_and_forwards_its_options() {
 
     let out = mlab(
         &home,
-        &["ioc", report.to_str().unwrap(), "--country", "fr", "--risk", "deep"],
+        &[
+            "ioc",
+            report.to_str().unwrap(),
+            "--country",
+            "fr",
+            "--risk",
+            "deep",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -1119,8 +1298,14 @@ fn a_script_is_uploaded_as_base64_then_read_back() {
     assert!(server.requests()[1].path.contains("sha256=abc123"));
 
     let rendered = stdout(&out);
-    assert!(rendered.contains("curl piped to shell"), "stdout: {rendered}");
-    assert!(rendered.contains("http://evil.test/x"), "stdout: {rendered}");
+    assert!(
+        rendered.contains("curl piped to shell"),
+        "stdout: {rendered}"
+    );
+    assert!(
+        rendered.contains("http://evil.test/x"),
+        "stdout: {rendered}"
+    );
 }
 
 // ── Network capture ───────────────────────────────────────────────────────
@@ -1128,20 +1313,28 @@ fn a_script_is_uploaded_as_base64_then_read_back() {
 #[test]
 fn a_network_capture_is_rendered_as_a_table() {
     let server = TestServer::start(|_| {
-        json(r#"{"count":2,"totalBytes":4096,"captureMs":812,"requests":[
+        json(
+            r#"{"count":2,"totalBytes":4096,"captureMs":812,"requests":[
                  {"method":"GET","status":200,"resourceType":"document","url":"https://a.test/",
                   "mimeType":"text/html","encodedBytes":2048,"failed":false},
                  {"method":"GET","status":404,"resourceType":"script","url":"https://a.test/x.js",
-                  "encodedBytes":0,"failed":true,"errorText":"net::ERR_ABORTED"}]}"#)
+                  "encodedBytes":0,"failed":true,"errorText":"net::ERR_ABORTED"}]}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["network", "https://a.test"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/loadnetworkrequest");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/scan/domain/loadnetworkrequest"
+    );
     let rendered = stdout(&out);
-    assert!(rendered.contains("https://a.test/x.js"), "stdout: {rendered}");
+    assert!(
+        rendered.contains("https://a.test/x.js"),
+        "stdout: {rendered}"
+    );
     assert!(rendered.contains("ERR_ABORTED"), "stdout: {rendered}");
     assert!(rendered.contains("404"), "stdout: {rendered}");
 }
@@ -1190,7 +1383,11 @@ fn file_results_still_render_the_older_payload() {
     let out = mlab(&home, &["results", "file", "abc"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).contains("EXIFTOOL"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("EXIFTOOL"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1207,7 +1404,10 @@ fn a_failed_file_scan_explains_itself() {
     let out = mlab(&home, &["results", "file", "abc"]);
 
     let rendered = stdout(&out);
-    assert!(rendered.contains("router rejected the sample"), "stdout: {rendered}");
+    assert!(
+        rendered.contains("router rejected the sample"),
+        "stdout: {rendered}"
+    );
 }
 
 #[test]
@@ -1220,7 +1420,10 @@ fn one_tools_raw_output_can_be_fetched_on_demand() {
     let out = mlab(&home, &["results", "file", "abc", "--tool", "strings"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/file/output");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/scan/file/output"
+    );
     assert!(server.requests()[0].path.contains("tool=strings"));
     assert_eq!(stdout(&out).trim(), "IHDR\nIDAT");
 }
@@ -1228,13 +1431,19 @@ fn one_tools_raw_output_can_be_fetched_on_demand() {
 #[test]
 fn a_json_tool_output_is_pretty_printed() {
     let server = TestServer::start(|_| {
-        json(r#"{"sha256":"abc","tool":"exif","is_json":true,"output":"{\"MIMEType\":\"image/png\"}"}"#)
+        json(
+            r#"{"sha256":"abc","tool":"exif","is_json":true,"output":"{\"MIMEType\":\"image/png\"}"}"#,
+        )
     });
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["results", "file", "abc", "--tool", "exif"]);
 
-    assert!(stdout(&out).contains("\"MIMEType\": \"image/png\""), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("\"MIMEType\": \"image/png\""),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 // ── Following a file scan ─────────────────────────────────────────────────
@@ -1250,7 +1459,9 @@ fn scan_file_follow_waits_for_the_analysis_then_prints_it() {
         ("POST", "/upload/file") => json(r#"{"success":true,"sha256":"abc","job_launched":true}"#),
         ("GET", "/api/v1/scan/file/results") => {
             if seen.fetch_add(1, Ordering::SeqCst) == 0 {
-                json(r#"{"status":"running","file":{"sha256":"abc"},"tools_total":2,"tools_done":1,"tools":[]}"#)
+                json(
+                    r#"{"status":"running","file":{"sha256":"abc"},"tools_total":2,"tools_done":1,"tools":[]}"#,
+                )
             } else {
                 json(FILE_RESULTS_CURRENT)
             }
@@ -1261,11 +1472,18 @@ fn scan_file_follow_waits_for_the_analysis_then_prints_it() {
     let sample = home.path.join("sample.bin");
     std::fs::write(&sample, b"hello").unwrap();
 
-    let out = mlab(&home, &["scan", "file", sample.to_str().unwrap(), "--follow"]);
+    let out = mlab(
+        &home,
+        &["scan", "file", sample.to_str().unwrap(), "--follow"],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(polls.load(Ordering::SeqCst) >= 2, "it should have waited");
-    assert!(stdout(&out).contains("sample.exe"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("sample.exe"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1282,7 +1500,10 @@ fn scan_file_follow_stops_on_a_failed_analysis() {
     let sample = home.path.join("sample.bin");
     std::fs::write(&sample, b"hello").unwrap();
 
-    let out = mlab(&home, &["scan", "file", sample.to_str().unwrap(), "--follow"]);
+    let out = mlab(
+        &home,
+        &["scan", "file", sample.to_str().unwrap(), "--follow"],
+    );
 
     // Terminal, so it must stop rather than poll until the timeout.
     assert!(stdout(&out).contains("boom"), "stdout: {}", stdout(&out));
@@ -1329,8 +1550,16 @@ fn progress_goes_to_stderr_and_results_to_stdout() {
     let out = mlab(&home, &["scan", "domain", "example.com", "--no-follow"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stderr(&out).contains("Scan launched"), "stderr: {}", stderr(&out));
-    assert!(stdout(&out).is_empty(), "stdout should be empty: {:?}", stdout(&out));
+    assert!(
+        stderr(&out).contains("Scan launched"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).is_empty(),
+        "stdout should be empty: {:?}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1338,7 +1567,10 @@ fn quiet_silences_progress_but_keeps_the_result() {
     let server = domain_server(r#"{"status":"pending"}"#);
     let home = TempHome::new(&server.url);
 
-    let out = mlab(&home, &["--quiet", "scan", "domain", "example.com", "--no-follow"]);
+    let out = mlab(
+        &home,
+        &["--quiet", "scan", "domain", "example.com", "--no-follow"],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stderr(&out).is_empty(), "stderr: {:?}", stderr(&out));
@@ -1358,8 +1590,16 @@ fn a_ci_environment_keeps_the_messages_and_drops_only_the_animation() {
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stderr(&out).contains("Scan launched"), "stderr: {:?}", stderr(&out));
-    assert!(!stderr(&out).contains('⠋'), "no animation in CI: {:?}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Scan launched"),
+        "stderr: {:?}",
+        stderr(&out)
+    );
+    assert!(
+        !stderr(&out).contains('⠋'),
+        "no animation in CI: {:?}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -1406,7 +1646,9 @@ fn progress_can_be_switched_off_by_environment() {
 
 #[test]
 fn a_lookup_keeps_its_report_on_stdout() {
-    let server = TestServer::start(|_| json(r#"{"mac":"00:11:22:33:44:55","vendor":"Acme","verdict":"ok"}"#));
+    let server = TestServer::start(|_| {
+        json(r#"{"mac":"00:11:22:33:44:55","vendor":"Acme","verdict":"ok"}"#)
+    });
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["scan", "mac", "00:11:22:33:44:55"]);
@@ -1444,19 +1686,32 @@ fn a_lockfile_is_posted_raw_so_the_server_detects_the_format() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap()],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let request = &server.requests()[0];
     assert_eq!(request.route_path(), "/api/v2/scan");
     assert_eq!(request.method, "POST");
-    assert!(request.path.contains("filename=package-lock.json"), "path: {}", request.path);
+    assert!(
+        request.path.contains("filename=package-lock.json"),
+        "path: {}",
+        request.path
+    );
     assert_eq!(request.body, r#"{"lockfileVersion":3}"#);
 
     let rendered = stdout(&out);
     assert!(rendered.contains("left-pad"), "stdout: {rendered}");
-    assert!(rendered.contains("1.2.3"), "the fixed version should be shown: {rendered}");
+    assert!(
+        rendered.contains("1.2.3"),
+        "the fixed version should be shown: {rendered}"
+    );
     assert!(rendered.contains("CVE-2026-1"), "stdout: {rendered}");
 }
 
@@ -1467,13 +1722,26 @@ fn a_url_scan_lets_the_server_fetch_the_manifest() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", "--url", "https://x.test/Cargo.lock"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            "--url",
+            "https://x.test/Cargo.lock",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let request = &server.requests()[0];
     assert_eq!(request.method, "GET");
-    assert!(request.path.contains("url=https%3A%2F%2Fx.test%2FCargo.lock"), "path: {}", request.path);
+    assert!(
+        request
+            .path
+            .contains("url=https%3A%2F%2Fx.test%2FCargo.lock"),
+        "path: {}",
+        request.path
+    );
 }
 
 #[test]
@@ -1485,12 +1753,24 @@ fn fail_on_matches_the_severity_the_web_ui_would_paint() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "high"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "high",
+        ],
     );
 
     // 9.8 is critical, so a `high` gate must fire.
     assert_eq!(out.status.code(), Some(7), "stdout: {}", stdout(&out));
-    assert!(stderr(&out).contains("at or above high"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("at or above high"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -1502,7 +1782,15 @@ fn fail_on_stays_quiet_below_its_threshold() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "high"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "high",
+        ],
     );
 
     // 5.5 is medium: reported, but it does not fail the build.
@@ -1527,12 +1815,24 @@ fn an_incomplete_scan_can_never_satisfy_a_gate() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "critical"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "critical",
+        ],
     );
 
     assert!(!out.status.success(), "an incomplete scan must not pass");
     assert_ne!(out.status.code(), Some(7), "it is an outage, not a finding");
-    assert!(stderr(&out).contains("incomplete"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("incomplete"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -1545,8 +1845,16 @@ fn the_gate_still_fires_in_json_mode() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(),
-          "--fail-on", "critical", "--json"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "critical",
+            "--json",
+        ],
     );
 
     assert_eq!(out.status.code(), Some(7));
@@ -1562,7 +1870,15 @@ fn an_unknown_threshold_is_refused_before_scanning() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap(), "--fail-on", "spicy"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "spicy",
+        ],
     );
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
@@ -1593,13 +1909,22 @@ fn a_vuln_token_is_sent_as_a_bearer_credential() {
 
     let out = mlab_env(
         &home,
-        &["--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap()],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+        ],
         &[("MLAB_VULN_TOKEN", "vt_secret")],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("Bearer vt_secret")
     );
 }
@@ -1613,7 +1938,15 @@ fn a_purl_query_is_sent_as_a_package_coordinate() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "vuln", "query", "pkg:cargo/time", "--version", "0.1.0"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "vuln",
+            "query",
+            "pkg:cargo/time",
+            "--version",
+            "0.1.0",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -1622,7 +1955,11 @@ fn a_purl_query_is_sent_as_a_package_coordinate() {
     let body: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
     assert_eq!(body["package"]["purl"], "pkg:cargo/time");
     assert_eq!(body["version"], "0.1.0");
-    assert!(stdout(&out).contains("No known vulnerabilities"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("No known vulnerabilities"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1630,7 +1967,16 @@ fn an_ecosystem_and_name_pair_also_works() {
     let server = TestServer::start(|_| json(r#"{"vulns":[]}"#));
     let home = TempHome::new("https://unused.example");
 
-    mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "crates.io/time"]);
+    mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "vuln",
+            "query",
+            "crates.io/time",
+        ],
+    );
 
     let body: serde_json::Value = serde_json::from_str(&server.requests()[0].body).expect("json");
     assert_eq!(body["package"]["ecosystem"], "crates.io");
@@ -1642,7 +1988,16 @@ fn something_that_is_not_a_coordinate_is_refused_locally() {
     let server = TestServer::start(|_| json(r#"{"vulns":[]}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "just-a-name"]);
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "vuln",
+            "query",
+            "just-a-name",
+        ],
+    );
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
     assert!(server.requests().is_empty());
@@ -1655,7 +2010,16 @@ fn an_upstream_outage_is_not_reported_as_a_clean_package() {
     let server = TestServer::start(|_| error(503, "upstream rate limited"));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--cve-hostname", &server.url, "vuln", "query", "pkg:cargo/time"]);
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "vuln",
+            "query",
+            "pkg:cargo/time",
+        ],
+    );
 
     assert!(!out.status.success(), "stdout: {}", stdout(&out));
     assert!(!stdout(&out).contains("No known vulnerabilities"));
@@ -1673,14 +2037,28 @@ fn export_uses_the_paths_that_actually_exist() {
 
         let out = mlab(
             &home,
-            &["--cve-hostname", &server.url, "cve", "export", "openssl", "--format", format, "--severity", "HIGH"],
+            &[
+                "--cve-hostname",
+                &server.url,
+                "cve",
+                "export",
+                "openssl",
+                "--format",
+                format,
+                "--severity",
+                "HIGH",
+            ],
         );
 
         assert!(out.status.success(), "stderr: {}", stderr(&out));
         let request = &server.requests()[0];
         assert_eq!(request.route_path(), expected);
         assert!(request.path.contains("q=openssl"), "path: {}", request.path);
-        assert!(request.path.contains("severity=HIGH"), "path: {}", request.path);
+        assert!(
+            request.path.contains("severity=HIGH"),
+            "path: {}",
+            request.path
+        );
     }
 }
 
@@ -1691,7 +2069,16 @@ fn the_dump_forwards_its_filters_and_prints_raw() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "cve", "dump", "--date-start", "2026-01-01", "--min-cvss", "7"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "cve",
+            "dump",
+            "--date-start",
+            "2026-01-01",
+            "--min-cvss",
+            "7",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -1741,11 +2128,22 @@ fn vendor_months_are_charted() {
 
     let out = mlab(
         &home,
-        &["--cve-hostname", &server.url, "cve", "vendor", "microsoft", "--year", "2026"],
+        &[
+            "--cve-hostname",
+            &server.url,
+            "cve",
+            "vendor",
+            "microsoft",
+            "--year",
+            "2026",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/vendor/microsoft/months");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/vendor/microsoft/months"
+    );
     assert!(server.requests()[0].path.contains("year=2026"));
     let rendered = stdout(&out);
     assert!(rendered.contains("Mar"), "stdout: {rendered}");
@@ -1771,7 +2169,14 @@ fn actor_list_filters_on_origin_not_country() {
 
     let out = mlab(
         &home,
-        &["--actors-hostname", &server.url, "actor", "list", "--origin", "Russia"],
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "list",
+            "--origin",
+            "Russia",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -1789,7 +2194,14 @@ fn country_is_accepted_as_an_alias_and_still_sends_origin() {
 
     let out = mlab(
         &home,
-        &["--actors-hostname", &server.url, "actor", "list", "--country", "Russia"],
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "list",
+            "--country",
+            "Russia",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
@@ -1803,13 +2215,32 @@ fn actor_list_forwards_every_documented_filter() {
 
     mlab(
         &home,
-        &["--actors-hostname", &server.url, "actor", "list",
-          "--motivation", "Financial gain", "--sector", "Financial",
-          "--updated-since", "2026-01-01T00:00:00Z", "--limit", "50", "--offset", "100"],
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "list",
+            "--motivation",
+            "Financial gain",
+            "--sector",
+            "Financial",
+            "--updated-since",
+            "2026-01-01T00:00:00Z",
+            "--limit",
+            "50",
+            "--offset",
+            "100",
+        ],
     );
 
     let path = &server.requests()[0].path;
-    for expected in ["motivation=Financial%20gain", "sector=Financial", "updated_since=2026-01-01", "limit=50", "offset=100"] {
+    for expected in [
+        "motivation=Financial%20gain",
+        "sector=Financial",
+        "updated_since=2026-01-01",
+        "limit=50",
+        "offset=100",
+    ] {
         assert!(path.contains(expected), "missing {expected} in {path}");
     }
 }
@@ -1817,14 +2248,20 @@ fn actor_list_forwards_every_documented_filter() {
 #[test]
 fn actor_list_says_when_more_pages_exist() {
     let server = TestServer::start(|_| {
-        json(r#"{"count":1,"total":250,"limit":1,"offset":0,"items":[
-                 {"slug":"apt28","primary_name":"APT28","suspected_origin":"Russia","motivation":[]}]}"#)
+        json(
+            r#"{"count":1,"total":250,"limit":1,"offset":0,"items":[
+                 {"slug":"apt28","primary_name":"APT28","suspected_origin":"Russia","motivation":[]}]}"#,
+        )
     });
     let home = TempHome::new("https://unused.example");
 
     let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list"]);
 
-    assert!(stdout(&out).contains("--offset"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("--offset"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1845,13 +2282,26 @@ fn actor_detail_renders_the_whole_bundle() {
     });
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "get", "apt28"]);
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "get", "apt28"],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(server.requests()[0].route_path(), "/api/v1/actors/apt28");
     let rendered = stdout(&out);
-    for expected in ["APT28", "Fancy Bear", "CVE-2023-23397", "Mimikatz", "T1566", "espionage group"] {
-        assert!(rendered.contains(expected), "missing {expected} in: {rendered}");
+    for expected in [
+        "APT28",
+        "Fancy Bear",
+        "CVE-2023-23397",
+        "Mimikatz",
+        "T1566",
+        "espionage group",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected} in: {rendered}"
+        );
     }
 }
 
@@ -1861,9 +2311,17 @@ fn a_missing_actor_is_an_error_despite_the_200() {
     let server = TestServer::start(|_| json(r#"{"error":"not_found"}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "get", "nope"]);
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "get", "nope"],
+    );
 
-    assert_eq!(out.status.code(), Some(EXIT_NOT_FOUND), "stdout: {}", stdout(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_NOT_FOUND),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1879,12 +2337,21 @@ fn actors_by_cve_uses_the_reverse_lookup_route() {
 
     let out = mlab(
         &home,
-        &["--actors-hostname", &server.url, "actor", "by-cve", "cve-2023-23397"],
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "by-cve",
+            "cve-2023-23397",
+        ],
     );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     // Lower-case input is normalised before the call.
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/cves/CVE-2023-23397/actors");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/cves/CVE-2023-23397/actors"
+    );
     let rendered = stdout(&out);
     assert!(rendered.contains("APT28"), "stdout: {rendered}");
     assert!(rendered.contains("vuln.mlab.sh"), "stdout: {rendered}");
@@ -1897,7 +2364,16 @@ fn a_sequence_shorter_than_the_api_accepts_is_refused() {
     let server = TestServer::start(|_| json(r#"{"actors":[]}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-2026-1"]);
+    let out = mlab(
+        &home,
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "by-cve",
+            "CVE-2026-1",
+        ],
+    );
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
     assert!(server.requests().is_empty());
@@ -1908,7 +2384,16 @@ fn a_malformed_cve_never_reaches_the_network() {
     let server = TestServer::start(|_| json(r#"{"actors":[]}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-23-1"]);
+    let out = mlab(
+        &home,
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "by-cve",
+            "CVE-23-1",
+        ],
+    );
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
     assert!(server.requests().is_empty(), "nothing should be requested");
@@ -1919,10 +2404,23 @@ fn no_documented_actor_is_stated_rather_than_left_blank() {
     let server = TestServer::start(|_| json(r#"{"cve_id":"CVE-2026-0001","count":0,"actors":[]}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "by-cve", "CVE-2026-0001"]);
+    let out = mlab(
+        &home,
+        &[
+            "--actors-hostname",
+            &server.url,
+            "actor",
+            "by-cve",
+            "CVE-2026-0001",
+        ],
+    );
 
     assert!(out.status.success());
-    assert!(stdout(&out).contains("No actor is documented"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("No actor is documented"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -1933,16 +2431,30 @@ fn actor_views_carry_the_dataset_attribution() {
 
     let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list"]);
 
-    assert!(stdout(&out).contains("CC BY-NC-SA 4.0"), "stdout: {}", stdout(&out));
-    assert!(stdout(&out).contains("MITRE ATT&CK"), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).contains("CC BY-NC-SA 4.0"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("MITRE ATT&CK"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 #[test]
 fn the_stix_bundle_and_bulk_exports_come_out_raw() {
     for (args, expected) in [
         (vec!["actor", "stix", "apt28"], "/actors/apt28.stix.json"),
-        (vec!["actor", "export", "--format", "csv"], "/export/actors.csv"),
-        (vec!["actor", "export", "--format", "jsonl"], "/export/actors.jsonl"),
+        (
+            vec!["actor", "export", "--format", "csv"],
+            "/export/actors.csv",
+        ),
+        (
+            vec!["actor", "export", "--format", "jsonl"],
+            "/export/actors.jsonl",
+        ),
     ] {
         let server = TestServer::start(|_| json(r#"{"type":"bundle"}"#));
         let home = TempHome::new("https://unused.example");
@@ -1962,7 +2474,10 @@ fn actor_json_output_stays_machine_readable() {
     let server = TestServer::start(|_| json(ACTOR_LIST));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--actors-hostname", &server.url, "actor", "list", "--json"]);
+    let out = mlab(
+        &home,
+        &["--actors-hostname", &server.url, "actor", "list", "--json"],
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
     assert_eq!(parsed["items"][0]["slug"], "apt28");
@@ -1974,14 +2489,19 @@ fn actor_json_output_stays_machine_readable() {
 fn limits_render_as_csv() {
     let server = TestServer::start(|req| {
         let scan_type = req.route_path().rsplit('/').next().unwrap();
-        json(&format!(r#"{{"scan_type":"{scan_type}","remaining":98,"total":100}}"#))
+        json(&format!(
+            r#"{{"scan_type":"{scan_type}","remaining":98,"total":100}}"#
+        ))
     });
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["-o", "csv", "limits", "domain"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(stdout(&out).trim(), "scan_type,remaining,total\ndomain,98,100");
+    assert_eq!(
+        stdout(&out).trim(),
+        "scan_type,remaining,total\ndomain,98,100"
+    );
 }
 
 #[test]
@@ -1995,10 +2515,24 @@ fn a_cve_search_renders_as_csv() {
     });
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["-o", "csv", "--cve-hostname", &server.url, "cve", "search", "x"]);
+    let out = mlab(
+        &home,
+        &[
+            "-o",
+            "csv",
+            "--cve-hostname",
+            &server.url,
+            "cve",
+            "search",
+            "x",
+        ],
+    );
 
     let text = stdout(&out);
-    assert!(text.starts_with("id,published,severity,cvss,in_kev,description"), "{text}");
+    assert!(
+        text.starts_with("id,published,severity,cvss,in_kev,description"),
+        "{text}"
+    );
     // A comma inside a field must be quoted, not shift every later column.
     assert!(text.contains(r#""a, comma""#), "{text}");
 }
@@ -2012,21 +2546,53 @@ fn a_dependency_scan_renders_as_csv() {
 
     let out = mlab(
         &home,
-        &["-o", "csv", "--cve-hostname", &server.url, "sbom", "scan", lockfile.to_str().unwrap()],
+        &[
+            "-o",
+            "csv",
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+        ],
     );
 
     let text = stdout(&out);
-    assert!(text.starts_with("package,version,ecosystem,advisory,cve,cvss,severity,fixed,summary"), "{text}");
-    assert!(text.contains("left-pad,1.0.0,npm,GHSA-x,CVE-2026-1,9.8,critical,1.2.3"), "{text}");
+    assert!(
+        text.starts_with("package,version,ecosystem,advisory,cve,cvss,severity,fixed,summary"),
+        "{text}"
+    );
+    assert!(
+        text.contains("left-pad,1.0.0,npm,GHSA-x,CVE-2026-1,9.8,critical,1.2.3"),
+        "{text}"
+    );
 }
 
 #[test]
 fn actors_and_certificates_render_as_csv() {
     let actors = TestServer::start(|_| json(ACTOR_LIST));
     let home = TempHome::new("https://unused.example");
-    let out = mlab(&home, &["-o", "csv", "--actors-hostname", &actors.url, "actor", "list"]);
-    assert!(stdout(&out).starts_with("slug,name,origin,motivation,sectors,countries"), "{}", stdout(&out));
-    assert!(stdout(&out).contains("apt28,APT28,Russia"), "{}", stdout(&out));
+    let out = mlab(
+        &home,
+        &[
+            "-o",
+            "csv",
+            "--actors-hostname",
+            &actors.url,
+            "actor",
+            "list",
+        ],
+    );
+    assert!(
+        stdout(&out).starts_with("slug,name,origin,motivation,sectors,countries"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("apt28,APT28,Russia"),
+        "{}",
+        stdout(&out)
+    );
 
     let certs = TestServer::start(|_| {
         json(
@@ -2037,8 +2603,16 @@ fn actors_and_certificates_render_as_csv() {
     });
     let home = TempHome::new(&certs.url);
     let out = mlab(&home, &["-o", "csv", "ssl", "example.com"]);
-    assert!(stdout(&out).starts_with("common_name,not_before,not_after,issuer,serial"), "{}", stdout(&out));
-    assert!(stdout(&out).contains("www.example.com,2026-01-15,2027-01-15,DigiCert G2,01"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).starts_with("common_name,not_before,not_after,issuer,serial"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("www.example.com,2026-01-15,2027-01-15,DigiCert G2,01"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -2050,8 +2624,15 @@ fn csv_is_refused_where_it_would_be_meaningless() {
     let out = mlab(&home, &["-o", "csv", "scan", "ip", "8.8.8.8"]);
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
-    assert!(stderr(&out).contains("--output json"), "stderr: {}", stderr(&out));
-    assert!(server.requests().is_empty(), "it must refuse before calling");
+    assert!(
+        stderr(&out).contains("--output json"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        server.requests().is_empty(),
+        "it must refuse before calling"
+    );
 }
 
 #[test]
@@ -2089,7 +2670,11 @@ fn a_dry_run_shows_the_method_for_a_write() {
 
     let out = mlab(&home, &["--dry-run", "scan", "domain", "example.com"]);
 
-    assert!(stdout(&out).trim().starts_with("POST "), "stdout: {}", stdout(&out));
+    assert!(
+        stdout(&out).trim().starts_with("POST "),
+        "stdout: {}",
+        stdout(&out)
+    );
     assert!(server.requests().is_empty());
 }
 
@@ -2098,9 +2683,15 @@ fn a_dry_run_reaches_the_auxiliary_hosts_too() {
     let server = TestServer::start(|_| json("{}"));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--dry-run", "--cve-hostname", &server.url, "cve", "latest"]);
+    let out = mlab(
+        &home,
+        &["--dry-run", "--cve-hostname", &server.url, "cve", "latest"],
+    );
 
-    assert_eq!(stdout(&out).trim(), format!("GET {}/api/v1/cve/latest", server.url));
+    assert_eq!(
+        stdout(&out).trim(),
+        format!("GET {}/api/v1/cve/latest", server.url)
+    );
 }
 
 // ── Profiles ──────────────────────────────────────────────────────────────
@@ -2126,7 +2717,10 @@ fn a_profile_swaps_the_credential_it_overrides() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("token work-key")
     );
 }
@@ -2139,7 +2733,10 @@ fn without_a_profile_the_base_credential_is_used() {
     mlab(&home, &["whoami"]);
 
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("token base-key")
     );
 }
@@ -2153,7 +2750,11 @@ fn an_unknown_profile_is_an_error_not_a_silent_fallback() {
     let out = mlab(&home, &["--profile", "typo", "whoami"]);
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
-    assert!(stderr(&out).contains("work"), "it should list what exists: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("work"),
+        "it should list what exists: {}",
+        stderr(&out)
+    );
     assert!(server.requests().is_empty());
 }
 
@@ -2165,7 +2766,10 @@ fn a_profile_can_come_from_the_environment() {
     mlab_env(&home, &["whoami"], &[("MLAB_PROFILE", "work")]);
 
     assert_eq!(
-        server.requests()[0].headers.get("authorization").map(String::as_str),
+        server.requests()[0]
+            .headers
+            .get("authorization")
+            .map(String::as_str),
         Some("token work-key")
     );
 }
@@ -2177,7 +2781,11 @@ fn config_path_prints_the_file_it_reads() {
     let home = TempHome::new("https://mlab.sh");
     let out = mlab(&home, &["config", "path"]);
     assert!(out.status.success());
-    assert!(stdout(&out).trim().ends_with(".mlab/conf.yml"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).trim().ends_with(".mlab/conf.yml"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[test]
@@ -2185,7 +2793,11 @@ fn config_masks_credentials_by_default() {
     let home = TempHome::with_key("https://mlab.sh", "mlab_abcdefghijklmnop");
 
     let listed = mlab(&home, &["config", "list"]);
-    assert!(!stdout(&listed).contains("abcdefghij"), "secret leaked: {}", stdout(&listed));
+    assert!(
+        !stdout(&listed).contains("abcdefghij"),
+        "secret leaked: {}",
+        stdout(&listed)
+    );
     assert!(stdout(&listed).contains("mlab…mnop"), "{}", stdout(&listed));
 
     let got = mlab(&home, &["config", "get", "api_key"]);
@@ -2205,7 +2817,10 @@ fn config_reveals_a_credential_only_when_asked() {
 fn config_set_writes_the_file_and_survives_a_reread() {
     let home = TempHome::new("https://mlab.sh");
 
-    let out = mlab(&home, &["config", "set", "hostname", "https://staging.mlab.sh"]);
+    let out = mlab(
+        &home,
+        &["config", "set", "hostname", "https://staging.mlab.sh"],
+    );
     assert!(out.status.success(), "stderr: {}", stderr(&out));
 
     let back = mlab(&home, &["config", "get", "hostname"]);
@@ -2216,10 +2831,20 @@ fn config_set_writes_the_file_and_survives_a_reread() {
 fn config_set_can_target_a_profile() {
     let home = TempHome::new("https://mlab.sh");
 
-    mlab(&home, &["--profile", "work", "config", "set", "api_key", "work-key"]);
+    mlab(
+        &home,
+        &["--profile", "work", "config", "set", "api_key", "work-key"],
+    );
 
-    assert!(read_config(&home).contains("profiles:"), "{}", read_config(&home));
-    let out = mlab(&home, &["--profile", "work", "config", "get", "api_key", "--reveal"]);
+    assert!(
+        read_config(&home).contains("profiles:"),
+        "{}",
+        read_config(&home)
+    );
+    let out = mlab(
+        &home,
+        &["--profile", "work", "config", "get", "api_key", "--reveal"],
+    );
     assert_eq!(stdout(&out).trim(), "work-key");
 }
 
@@ -2230,7 +2855,11 @@ fn an_unknown_config_key_is_refused_with_the_list_of_valid_ones() {
     let out = mlab(&home, &["config", "get", "banana"]);
 
     assert_eq!(out.status.code(), Some(EXIT_INPUT));
-    assert!(stderr(&out).contains("hostname"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("hostname"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 // ── Unified search ────────────────────────────────────────────────────────
@@ -2244,10 +2873,14 @@ fn search_routes_each_shape_to_the_endpoint_that_owns_it() {
         ("d41d8cd98f00b204e9800998ecf8427e", "/api/v1/scan/hash"),
         ("+33612345678", "/api/v1/scan/phone"),
         ("https://example.com/x", "/api/v1/scan/url"),
-        ("0x742d35Cc6634C0532925a3b844Bc454e4438f44e", "/api/v1/scan/crypto"),
+        (
+            "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+            "/api/v1/scan/crypto",
+        ),
     ] {
         // One payload that satisfies every renderer the dispatcher may pick.
-        let server = TestServer::start(|_| json(r#"{"ip":"8.8.8.8","reserved":false,"verdict":"ok"}"#));
+        let server =
+            TestServer::start(|_| json(r#"{"ip":"8.8.8.8","reserved":false,"verdict":"ok"}"#));
         let home = TempHome::new(&server.url);
 
         let out = mlab(&home, &["search", query]);
@@ -2266,8 +2899,15 @@ fn searching_a_domain_reads_the_report_instead_of_launching_a_scan() {
     let out = mlab(&home, &["search", "example.com"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/results");
-    assert!(server.requests().iter().all(|r| r.method == "GET"), "{:?}", server.routes());
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/scan/domain/results"
+    );
+    assert!(
+        server.requests().iter().all(|r| r.method == "GET"),
+        "{:?}",
+        server.routes()
+    );
 }
 
 #[test]
@@ -2275,10 +2915,22 @@ fn searching_a_cve_goes_to_the_cve_host() {
     let server = TestServer::start(|_| json(r#"{"id":"CVE-2024-3094"}"#));
     let home = TempHome::new("https://unused.example");
 
-    let out = mlab(&home, &["--cve-hostname", &server.url, "search", "CVE-2024-3094", "--json"]);
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "search",
+            "CVE-2024-3094",
+            "--json",
+        ],
+    );
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/cve/CVE-2024-3094");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/cve/CVE-2024-3094"
+    );
 }
 
 #[test]
@@ -2288,7 +2940,11 @@ fn search_says_what_it_detected() {
 
     let out = mlab(&home, &["search", "8.8.8.8"]);
 
-    assert!(stderr(&out).contains("IP address"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("IP address"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -2336,7 +2992,10 @@ fn completion_scripts_are_generated_for_the_usual_shells() {
     for shell in ["bash", "zsh", "fish"] {
         let out = mlab(&home, &["completions", shell]);
         assert!(out.status.success(), "{shell} → {}", stderr(&out));
-        assert!(stdout(&out).contains("mlab"), "{shell} produced nothing usable");
+        assert!(
+            stdout(&out).contains("mlab"),
+            "{shell} produced nothing usable"
+        );
     }
 }
 

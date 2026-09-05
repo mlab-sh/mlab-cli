@@ -72,7 +72,9 @@ impl TestServer {
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let Some(request) = read_request(&mut stream) else { continue };
+                let Some(request) = read_request(&mut stream) else {
+                    continue;
+                };
                 recorded.lock().unwrap().push(request.clone());
                 let reply = handler(&request);
                 let _ = write_response(&mut stream, &reply);
@@ -94,7 +96,9 @@ impl TestServer {
     }
 
     pub fn first_matching(&self, needle: &str) -> Option<RecordedRequest> {
-        self.requests().into_iter().find(|r| r.path.contains(needle))
+        self.requests()
+            .into_iter()
+            .find(|r| r.path.contains(needle))
     }
 }
 
@@ -128,7 +132,10 @@ fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {
     }
 
     let mut body = Vec::new();
-    match headers.get("content-length").and_then(|v| v.parse::<usize>().ok()) {
+    match headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         Some(len) if len > 0 => {
             body.resize(len, 0);
             reader.read_exact(&mut body).ok()?;
@@ -173,11 +180,19 @@ fn write_response(stream: &mut TcpStream, reply: &Reply) -> std::io::Result<()> 
 }
 
 pub fn json(body: &str) -> Reply {
-    Reply { status: 200, body: body.to_string(), headers: Vec::new() }
+    Reply {
+        status: 200,
+        body: body.to_string(),
+        headers: Vec::new(),
+    }
 }
 
 pub fn status_json(code: u16, body: &str) -> Reply {
-    Reply { status: code, body: body.to_string(), headers: Vec::new() }
+    Reply {
+        status: code,
+        body: body.to_string(),
+        headers: Vec::new(),
+    }
 }
 
 pub fn error(code: u16, message: &str) -> Reply {

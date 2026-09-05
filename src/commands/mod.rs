@@ -1,16 +1,16 @@
-pub mod login;
-pub mod whoami;
-pub mod scan;
-pub mod status;
-pub mod results;
-pub mod ssl;
-pub mod limits;
-pub mod lookup;
-pub mod cve;
-pub mod vuln;
 pub mod actor;
-pub mod search;
 pub mod config;
+pub mod cve;
+pub mod limits;
+pub mod login;
+pub mod lookup;
+pub mod results;
+pub mod scan;
+pub mod search;
+pub mod ssl;
+pub mod status;
+pub mod vuln;
+pub mod whoami;
 
 use reqwest::blocking::Response;
 use serde::de::DeserializeOwned;

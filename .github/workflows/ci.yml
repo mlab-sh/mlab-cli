@@ -1,5 +1,9 @@
 name: CI
 
+# The same three checks the release workflow gates on, run on every push and
+# pull request so a branch that could not be released fails here first rather
+# than at the moment someone clicks Release.
+
 on:
   push:
     branches: [main]
@@ -17,10 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-      - name: Cache cargo
+      - name: Cache cargo registry and target
         uses: actions/cache@v4
         with:
           path: |
@@ -30,11 +36,21 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # Formatting and lints are platform-independent, so they run once rather
+      # than on both runners.
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --check
+
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --all-targets --locked -- -D warnings
+
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --all-targets --locked
 
       # The integration suite binds an ephemeral loopback port per test and
       # points the CLI at a throwaway $HOME, so it needs no credentials and
       # never touches the network.
       - name: Test
-        run: cargo test -- --nocapture
+        run: cargo test --all --locked

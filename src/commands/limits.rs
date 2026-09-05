@@ -13,10 +13,26 @@ struct LimitInfo {
 }
 
 const LIMITS: &[LimitInfo] = &[
-    LimitInfo { label: "Domain scans",   icon: "🌐", path: "/limit/domain" },
-    LimitInfo { label: "IP lookups",     icon: "🔍", path: "/limit/ip" },
-    LimitInfo { label: "File scans",     icon: "📄", path: "/limit/file" },
-    LimitInfo { label: "Crypto lookups", icon: "🪙", path: "/limit/crypto" },
+    LimitInfo {
+        label: "Domain scans",
+        icon: "🌐",
+        path: "/limit/domain",
+    },
+    LimitInfo {
+        label: "IP lookups",
+        icon: "🔍",
+        path: "/limit/ip",
+    },
+    LimitInfo {
+        label: "File scans",
+        icon: "📄",
+        path: "/limit/file",
+    },
+    LimitInfo {
+        label: "Crypto lookups",
+        icon: "🪙",
+        path: "/limit/crypto",
+    },
 ];
 
 /// The API answers with a JSON object, not a bare number:
@@ -57,7 +73,11 @@ fn print_bar(remaining: u64, total: u64) -> String {
     let filled = "█".repeat(fill);
     format!(
         "{}{}",
-        if is_low(remaining, total) { filled.red() } else { filled.green() },
+        if is_low(remaining, total) {
+            filled.red()
+        } else {
+            filled.green()
+        },
         "░".repeat(BAR_WIDTH - fill).dimmed(),
     )
 }
@@ -88,7 +108,10 @@ pub fn run(client: &MlabClient, scan_type: Option<&str>, raw: bool) {
         spinner.advance();
         match outcome {
             Ok(l) => {
-                values.push(Some(LimitResponse { remaining: l.remaining, total: l.total }));
+                values.push(Some(LimitResponse {
+                    remaining: l.remaining,
+                    total: l.total,
+                }));
                 rows.push((
                     i,
                     if raw {

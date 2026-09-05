@@ -182,24 +182,6 @@ pub fn retry_after(resp: &Response) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backoff_grows_with_each_attempt() {
-        assert!(backoff(2) > backoff(1));
-        assert!(backoff(3) > backoff(2));
-    }
-
-    #[test]
-    fn the_api_prefix_is_appended_once_and_the_root_kept_separate() {
-        let c = MlabClient::new("https://mlab.sh/", "k");
-        assert_eq!(c.root_url, "https://mlab.sh");
-        assert_eq!(c.base_url, "https://mlab.sh/api/v1");
-    }
-}
-
 /// Client for the auxiliary hosts — `vuln.mlab.sh` and `actors.mlab.sh` — which
 /// share a shape that differs from the main API: no `/api/v1` prefix baked into
 /// the base URL, most routes public, and an optional bearer token (vuln's
@@ -219,7 +201,10 @@ impl HostClient {
         }
     }
 
-    fn authorize(&self, req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn authorize(
+        &self,
+        req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         match &self.token {
             Some(t) => req.header("Authorization", format!("Bearer {t}")),
             None => req,
@@ -263,5 +248,23 @@ impl HostClient {
             .body(body)
             .send()
             .map_err(ApiError::transport)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_grows_with_each_attempt() {
+        assert!(backoff(2) > backoff(1));
+        assert!(backoff(3) > backoff(2));
+    }
+
+    #[test]
+    fn the_api_prefix_is_appended_once_and_the_root_kept_separate() {
+        let c = MlabClient::new("https://mlab.sh/", "k");
+        assert_eq!(c.root_url, "https://mlab.sh");
+        assert_eq!(c.base_url, "https://mlab.sh/api/v1");
     }
 }

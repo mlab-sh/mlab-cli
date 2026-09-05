@@ -9,11 +9,15 @@ mod util;
 
 use clap::{Parser, Subcommand};
 
-use client::{MlabClient, HostClient};
+use client::{HostClient, MlabClient};
 use config::Config;
 
 #[derive(Parser)]
-#[command(name = "mlab", version, about = "CLI client for the mlab.sh threat intelligence API")]
+#[command(
+    name = "mlab",
+    version,
+    about = "CLI client for the mlab.sh threat intelligence API"
+)]
 struct Cli {
     /// Override the API hostname (default: https://mlab.sh)
     #[arg(long, global = true)]
@@ -740,14 +744,28 @@ fn main() {
         Commands::Scan { target } => {
             let client = make_client(&cli);
             match target {
-                ScanTarget::Domain { domain, no_follow, json } => commands::scan::domain(&client, domain, *no_follow, *json),
+                ScanTarget::Domain {
+                    domain,
+                    no_follow,
+                    json,
+                } => commands::scan::domain(&client, domain, *no_follow, *json),
                 ScanTarget::Ip { ip, json } => commands::scan::ip(&client, ip, *json),
-                ScanTarget::File { path, follow, json } => commands::scan::file(&client, path, *follow, *json),
-                ScanTarget::Crypto { addresses, chain, json } => commands::scan::crypto(&client, addresses, chain.as_deref(), *json),
-                ScanTarget::Url { url, resolve, json } => commands::lookup::url(&client, url, *resolve, *json),
+                ScanTarget::File { path, follow, json } => {
+                    commands::scan::file(&client, path, *follow, *json)
+                }
+                ScanTarget::Crypto {
+                    addresses,
+                    chain,
+                    json,
+                } => commands::scan::crypto(&client, addresses, chain.as_deref(), *json),
+                ScanTarget::Url { url, resolve, json } => {
+                    commands::lookup::url(&client, url, *resolve, *json)
+                }
                 ScanTarget::Hash { hashes, json } => commands::lookup::hash(&client, hashes, *json),
                 ScanTarget::Email { email, json } => commands::lookup::email(&client, email, *json),
-                ScanTarget::Phone { number, json } => commands::lookup::phone(&client, number, *json),
+                ScanTarget::Phone { number, json } => {
+                    commands::lookup::phone(&client, number, *json)
+                }
                 ScanTarget::Mac { mac, json } => commands::lookup::mac(&client, mac, *json),
                 ScanTarget::Bash { path, json } => commands::lookup::bash(&client, path, *json),
             }
@@ -761,13 +779,20 @@ fn main() {
         Commands::Results { target, json } => {
             let client = make_client(&cli);
             match target {
-                ResultsTarget::Domain { domain } => commands::results::domain(&client, domain, *json),
+                ResultsTarget::Domain { domain } => {
+                    commands::results::domain(&client, domain, *json)
+                }
                 ResultsTarget::File { sha256, tool } => {
                     commands::results::file(&client, sha256, tool.as_deref(), *json)
                 }
             }
         }
-        Commands::Ioc { source, country, risk, json } => {
+        Commands::Ioc {
+            source,
+            country,
+            risk,
+            json,
+        } => {
             let client = make_client(&cli);
             commands::lookup::ioc(&client, source, country.as_deref(), risk.as_deref(), *json);
         }
@@ -782,19 +807,54 @@ fn main() {
         Commands::Cve { action } => {
             let client = make_vuln_client(&cli);
             match action {
-                CveAction::Search { query, filters, page, limit, json } => {
-                    commands::cve::search(&client, query, &filters.as_options(*page, *limit), *json);
+                CveAction::Search {
+                    query,
+                    filters,
+                    page,
+                    limit,
+                    json,
+                } => {
+                    commands::cve::search(
+                        &client,
+                        query,
+                        &filters.as_options(*page, *limit),
+                        *json,
+                    );
                 }
-                CveAction::Export { query, filters, format } => {
+                CveAction::Export {
+                    query,
+                    filters,
+                    format,
+                } => {
                     commands::cve::export(&client, query, &filters.as_options(0, None), format);
                 }
-                CveAction::Dump { date_start, date_end, min_cvss } => {
-                    commands::cve::dump(&client, date_start.as_deref(), date_end.as_deref(), *min_cvss);
+                CveAction::Dump {
+                    date_start,
+                    date_end,
+                    min_cvss,
+                } => {
+                    commands::cve::dump(
+                        &client,
+                        date_start.as_deref(),
+                        date_end.as_deref(),
+                        *min_cvss,
+                    );
                 }
                 CveAction::Stats { json } => commands::cve::stats(&client, *json),
                 CveAction::Sources { json } => commands::cve::sources(&client, *json),
-                CveAction::Advisories { cve, country, limit, json } => {
-                    commands::cve::advisories(&client, cve.as_deref(), country.as_deref(), *limit, *json);
+                CveAction::Advisories {
+                    cve,
+                    country,
+                    limit,
+                    json,
+                } => {
+                    commands::cve::advisories(
+                        &client,
+                        cve.as_deref(),
+                        country.as_deref(),
+                        *limit,
+                        *json,
+                    );
                 }
                 CveAction::Vendor { vendor, year, json } => {
                     commands::cve::vendor_months(&client, vendor, *year, *json);
@@ -844,7 +904,15 @@ fn main() {
         Commands::Actor { action } => {
             let client = make_actors_client(&cli);
             match action {
-                ActorAction::List { origin, motivation, sector, updated_since, limit, offset, json } => {
+                ActorAction::List {
+                    origin,
+                    motivation,
+                    sector,
+                    updated_since,
+                    limit,
+                    offset,
+                    json,
+                } => {
                     let filters = commands::actor::ListFilters {
                         origin: origin.as_deref(),
                         motivation: motivation.as_deref(),
@@ -867,7 +935,13 @@ fn main() {
         Commands::Sbom { action } => {
             let client = make_vuln_client(&cli);
             match action {
-                SbomAction::Scan { path, url, format, fail_on, json } => {
+                SbomAction::Scan {
+                    path,
+                    url,
+                    format,
+                    fail_on,
+                    json,
+                } => {
                     let opts = commands::vuln::ScanOptions {
                         source: path.as_deref(),
                         url: url.as_deref(),
@@ -882,7 +956,11 @@ fn main() {
         Commands::Vuln { action } => {
             let client = make_vuln_client(&cli);
             match action {
-                VulnAction::Query { coordinate, version, json } => {
+                VulnAction::Query {
+                    coordinate,
+                    version,
+                    json,
+                } => {
                     commands::vuln::query(&client, coordinate, version.as_deref(), *json);
                 }
             }

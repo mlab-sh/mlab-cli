@@ -165,7 +165,12 @@ impl Config {
     }
 
     pub fn resolved_hostname(&self, flag: Option<&str>) -> String {
-        resolve(flag, std::env::var(HOSTNAME_ENV).ok(), &self.hostname, DEFAULT_HOSTNAME)
+        resolve(
+            flag,
+            std::env::var(HOSTNAME_ENV).ok(),
+            &self.hostname,
+            DEFAULT_HOSTNAME,
+        )
     }
 
     pub fn resolved_cve_hostname(&self, flag: Option<&str>) -> String {
@@ -189,7 +194,12 @@ impl Config {
     }
 
     pub fn resolved_vuln_token(&self, flag: Option<&str>) -> Option<String> {
-        let token = resolve(flag, std::env::var(VULN_TOKEN_ENV).ok(), &self.vuln_token, "");
+        let token = resolve(
+            flag,
+            std::env::var(VULN_TOKEN_ENV).ok(),
+            &self.vuln_token,
+            "",
+        );
         Some(token).filter(|t| !t.is_empty())
     }
 
@@ -272,9 +282,14 @@ mod tests {
 
     #[test]
     fn a_profile_overrides_only_the_fields_it_sets() {
-        let raw = "hostname: https://mlab.sh\napi_key: base\nprofiles:\n  work:\n    api_key: work-key\n";
+        let raw =
+            "hostname: https://mlab.sh\napi_key: base\nprofiles:\n  work:\n    api_key: work-key\n";
         let mut config: Config = serde_yaml::from_str(raw).expect("parses");
-        let profile = config.profiles.get("work").cloned().expect("profile exists");
+        let profile = config
+            .profiles
+            .get("work")
+            .cloned()
+            .expect("profile exists");
 
         overlay(&mut config.api_key, &profile.api_key);
         overlay(&mut config.hostname, &profile.hostname);
@@ -310,7 +325,10 @@ mod tests {
 
     #[test]
     fn a_flag_beats_the_environment_which_beats_the_file() {
-        assert_eq!(resolve(Some("flag"), Some("env".into()), "file", "def"), "flag");
+        assert_eq!(
+            resolve(Some("flag"), Some("env".into()), "file", "def"),
+            "flag"
+        );
         assert_eq!(resolve(None, Some("env".into()), "file", "def"), "env");
         assert_eq!(resolve(None, None, "file", "def"), "file");
         assert_eq!(resolve(None, None, "", "def"), "def");

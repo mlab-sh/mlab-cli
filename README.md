@@ -1,5 +1,7 @@
 # mlab-cli
 
+![](./.github/banner.png)
+
 `mlab` is the official command-line client for the [mlab.sh](https://mlab.sh)
 threat-intelligence platform and its companion services: the CVE and dependency
 scanner at [vuln.mlab.sh](https://vuln.mlab.sh) and the threat-actor database at
@@ -31,16 +33,32 @@ Download the right tarball for your platform from the
 binary into a directory on your `PATH`:
 
 ```bash
-tar xzf mlab-darwin-arm64.tar.gz
-sudo mv mlab /usr/local/bin/
+tar xzf mlab-1.0.1-aarch64-apple-darwin.tar.gz
+sudo mv mlab-1.0.1-aarch64-apple-darwin/mlab /usr/local/bin/
 ```
 
 Pre-built archives are published for:
 
-- `mlab-darwin-arm64` — macOS Apple Silicon
-- `mlab-darwin-amd64` — macOS Intel
-- `mlab-linux-amd64` — Linux x86_64 (glibc)
-- `mlab-linux-arm64` — Linux aarch64 (glibc)
+- `aarch64-apple-darwin` — macOS Apple Silicon
+- `x86_64-apple-darwin` — macOS Intel
+- `x86_64-unknown-linux-gnu` — Linux x86_64 (glibc 2.35+)
+- `aarch64-unknown-linux-gnu` — Linux aarch64 (glibc 2.35+)
+
+Nothing is signed, so every release carries a `SHA256SUMS` covering all of its
+assets:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+### Debian, Ubuntu, Fedora and RHEL
+
+`.deb` and `.rpm` packages for both architectures are on the same page:
+
+```bash
+sudo apt install ./mlab_1.0.1_amd64.deb
+sudo dnf install ./mlab-1.0.1-1.x86_64.rpm
+```
 
 ### From source
 
@@ -472,22 +490,42 @@ isolated `$HOME`, so the suite needs no API key and never reaches the network.
 
 ## Releases
 
-Tagged commits (`v*`) trigger a GitHub Actions build that produces:
+The **Release** workflow is a manual trigger from the Actions tab. The version
+is whatever `Cargo.toml` says, so a release is a version bump, a commit, and a
+click — the tag, the archive names, the packages and the formula cannot
+disagree with the binary they contain.
 
-- Static-TLS binaries for the four supported targets, packaged as `.tar.gz`
-- A GitHub Release with auto-generated notes and the tarballs attached
+A test gate runs first (`cargo fmt --check`, `cargo clippy -D warnings`,
+`cargo test --locked`); nothing is built if any of the three fails. What comes
+out:
+
+- Tarballs for the four supported targets, each holding the binary, the README
+  and the licence
+- A `.deb` and an `.rpm` for both Linux architectures
+- A `SHA256SUMS` file covering every asset, since nothing is signed
 - An auto-bumped [`Formula/mlab.rb`](Formula/mlab.rb) committed back to `main`,
   so `brew upgrade mlab` picks the new version up on the next refresh
 
-To cut a release:
+The Linux builds run on `ubuntu-22.04` rather than latest: a glibc binary never
+runs against a glibc older than the one it was linked with, and 22.04 lowers
+the floor to glibc 2.35, so the packages still install on Debian 12.
 
-```bash
-# bump version in Cargo.toml, commit, then:
-git tag v0.2.0
-git push origin v0.2.0
-```
+To cut a release: bump `version` in `Cargo.toml`, run `cargo build` so
+`Cargo.lock` follows, commit, and run the workflow.
 
-You can also trigger the workflow manually from the Actions tab.
+The full story is in the wiki: [Releasing](https://github.com/mlab-sh/mlab-cli/wiki/Releasing).
+
+## Documentation
+
+The [wiki](https://github.com/mlab-sh/mlab-cli/wiki) has a page per command and
+per concept — [Hosts](https://github.com/mlab-sh/mlab-cli/wiki/Hosts),
+[Authentication](https://github.com/mlab-sh/mlab-cli/wiki/Authentication),
+[Output](https://github.com/mlab-sh/mlab-cli/wiki/Output),
+[Exit codes](https://github.com/mlab-sh/mlab-cli/wiki/Exit-Codes).
+
+Those pages live in [`wiki/`](wiki) in this repository and are mirrored to the
+GitHub wiki on every push to `main`. The repository is the source of truth: a
+page edited in the wiki web UI is overwritten on the next sync.
 
 ## License
 

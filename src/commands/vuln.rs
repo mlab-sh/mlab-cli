@@ -13,11 +13,11 @@ use std::path::Path;
 use colored::Colorize;
 use serde_json::Value;
 
-use crate::output;
 use crate::client::HostClient;
 use crate::commands::{print_json, vuln_body};
 use crate::cvss::{band, score_of, Severity};
 use crate::error::{ApiError, ErrorKind, EXIT_FINDINGS};
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -63,9 +63,7 @@ pub fn scan(client: &HostClient, opts: &ScanOptions) {
             if let Some(f) = opts.format {
                 path.push_str(&format!("&format={}", urlencode(f)));
             }
-            let raw = ui::with_spinner(&format!("Scanning {url}"), || {
-                vuln_body(client.get(&path))
-            });
+            let raw = ui::with_spinner(&format!("Scanning {url}"), || vuln_body(client.get(&path)));
             (raw, url.to_string())
         }
         (None, Some(source)) => {
@@ -125,7 +123,17 @@ pub fn scan(client: &HostClient, opts: &ScanOptions) {
             })
             .collect();
         output::csv_table(
-            &["package", "version", "ecosystem", "advisory", "cve", "cvss", "severity", "fixed", "summary"],
+            &[
+                "package",
+                "version",
+                "ecosystem",
+                "advisory",
+                "cve",
+                "cvss",
+                "severity",
+                "fixed",
+                "summary",
+            ],
             &rows,
         );
     } else {
@@ -169,7 +177,11 @@ pub fn query(client: &HostClient, coordinate: &str, version: Option<&str>, json:
     }
 
     let v: Value = crate::commands::parse_or_exit(&body, "query");
-    let vulns = v.get("vulns").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    let vulns = v
+        .get("vulns")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let findings: Vec<Finding> = vulns
         .iter()
@@ -178,10 +190,13 @@ pub fn query(client: &HostClient, coordinate: &str, version: Option<&str>, json:
 
     println!();
     println!(
-        "  {} {}  {}",
-        "📦",
-        "Package Query",
-        format!("{coordinate}{}", version.map(|v| format!("@{v}")).unwrap_or_default()).cyan().bold()
+        "  📦 Package Query  {}",
+        format!(
+            "{coordinate}{}",
+            version.map(|v| format!("@{v}")).unwrap_or_default()
+        )
+        .cyan()
+        .bold()
     );
     println!("{}", format!("  {}", "─".repeat(88)).dimmed());
     if findings.is_empty() {
@@ -198,12 +213,22 @@ pub fn query(client: &HostClient, coordinate: &str, version: Option<&str>, json:
 // ═══════════════════════════════════════════════════════════════════
 
 fn collect(v: &Value) -> Vec<Finding> {
-    let results = v.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
-    let packages = v.get("packages").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    let results = v
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let packages = v
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let mut findings = Vec::new();
     for (i, result) in results.iter().enumerate() {
-        let Some(vulns) = result.get("vulns").and_then(|x| x.as_array()) else { continue };
+        let Some(vulns) = result.get("vulns").and_then(|x| x.as_array()) else {
+            continue;
+        };
         // `results[i]` lines up with the coordinates the server echoed back.
         let coord = packages.get(i);
         let name = coord
@@ -237,7 +262,11 @@ fn collect(v: &Value) -> Vec<Finding> {
 }
 
 fn finding_from(vuln: &Value, package: &str, version: &str, ecosystem: &str) -> Finding {
-    let advisory = vuln.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let advisory = vuln
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     let cve = if advisory.to_ascii_uppercase().starts_with("CVE-") {
         advisory.clone()
     } else {
@@ -277,7 +306,11 @@ fn finding_from(vuln: &Value, package: &str, version: &str, ecosystem: &str) -> 
 
 /// The version that resolves the advisory, when the range says so.
 fn fixed_version(vuln: &Value, package: &str) -> String {
-    let affected = vuln.get("affected").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    let affected = vuln
+        .get("affected")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
     for entry in &affected {
         // An advisory can cover several packages; only this one's ranges apply.
         if !package.is_empty() {
@@ -287,8 +320,18 @@ fn fixed_version(vuln: &Value, package: &str) -> String {
                 }
             }
         }
-        for range in entry.get("ranges").and_then(|r| r.as_array()).into_iter().flatten() {
-            for event in range.get("events").and_then(|e| e.as_array()).into_iter().flatten() {
+        for range in entry
+            .get("ranges")
+            .and_then(|r| r.as_array())
+            .into_iter()
+            .flatten()
+        {
+            for event in range
+                .get("events")
+                .and_then(|e| e.as_array())
+                .into_iter()
+                .flatten()
+            {
                 if let Some(fixed) = event.get("fixed").and_then(|f| f.as_str()) {
                     return fixed.to_string();
                 }
@@ -307,16 +350,23 @@ fn render(v: &Value, findings: &[Finding], label: &str) {
     let cached = v.get("cached").and_then(|c| c.as_bool()).unwrap_or(false);
 
     println!();
-    println!("  {} Dependency Scan  {}", "📦", label.cyan().bold());
+    println!("  📦 Dependency Scan  {}", label.cyan().bold());
     println!("{}", format!("  {}", "─".repeat(88)).dimmed());
     println!(
         "  {:<14} {}{}",
         "Packages:".dimmed(),
         scanned.to_string().bold(),
-        if cached { "  (cached)".dimmed().to_string() } else { String::new() },
+        if cached {
+            "  (cached)".dimmed().to_string()
+        } else {
+            String::new()
+        },
     );
 
-    if v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false) {
+    if v.get("truncated")
+        .and_then(|t| t.as_bool())
+        .unwrap_or(false)
+    {
         println!(
             "  {}",
             "Manifest truncated — not every package was scanned.".yellow()
@@ -383,7 +433,11 @@ fn print_table(findings: &[Finding]) {
         };
 
         let advisory = truncate(&advisory, 24);
-        let fixed = if f.fixed.is_empty() { "—".to_string() } else { f.fixed.clone() };
+        let fixed = if f.fixed.is_empty() {
+            "—".to_string()
+        } else {
+            f.fixed.clone()
+        };
 
         println!(
             "  {:<28} {}{} {}{} {}{} {}",
@@ -392,7 +446,11 @@ fn print_table(findings: &[Finding]) {
             pad(&severity, 14),
             advisory,
             pad(&advisory, 24),
-            if f.fixed.is_empty() { fixed.dimmed().to_string() } else { fixed.green().to_string() },
+            if f.fixed.is_empty() {
+                fixed.dimmed().to_string()
+            } else {
+                fixed.green().to_string()
+            },
             pad(&fixed, 10),
             truncate(&f.summary, 58).dimmed(),
         );
@@ -402,7 +460,13 @@ fn print_table(findings: &[Finding]) {
 
 fn tally(findings: &[Finding]) -> Vec<(Severity, usize)> {
     let mut out = Vec::new();
-    for sev in [Severity::Critical, Severity::High, Severity::Medium, Severity::Low, Severity::None] {
+    for sev in [
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::None,
+    ] {
         let n = findings.iter().filter(|f| f.severity == sev).count();
         if n > 0 {
             out.push((sev, n));
@@ -432,7 +496,11 @@ fn incomplete(v: &Value) -> Vec<String> {
     let unscanned = v
         .get("results")
         .and_then(|r| r.as_array())
-        .map(|rs| rs.iter().filter(|r| r.get("ok").and_then(|o| o.as_bool()) == Some(false)).count())
+        .map(|rs| {
+            rs.iter()
+                .filter(|r| r.get("ok").and_then(|o| o.as_bool()) == Some(false))
+                .count()
+        })
         .unwrap_or(0);
     if unscanned > 0 {
         // The API is explicit that this is not the same as "no vulnerabilities".
@@ -441,7 +509,10 @@ fn incomplete(v: &Value) -> Vec<String> {
         ));
     }
 
-    if v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false) {
+    if v.get("truncated")
+        .and_then(|t| t.as_bool())
+        .unwrap_or(false)
+    {
         reasons.push("The manifest was truncated before scanning.".to_string());
     }
 
@@ -471,7 +542,10 @@ fn gate(findings: &[Finding], payload: &Value, threshold: Option<Severity>, json
         .report();
     }
 
-    let matched: Vec<&Finding> = findings.iter().filter(|f| f.severity >= threshold).collect();
+    let matched: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.severity >= threshold)
+        .collect();
     if matched.is_empty() {
         return;
     }
@@ -499,7 +573,10 @@ fn truncate(s: &str, width: usize) -> String {
     if s.chars().count() <= width {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(width.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(width.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -556,9 +633,7 @@ mod tests {
 
     #[test]
     fn findings_are_ordered_worst_first() {
-        let vuln = |id: &str, vector: &str| {
-            json!({"id": id, "severity":[{"score": vector}]})
-        };
+        let vuln = |id: &str, vector: &str| json!({"id": id, "severity":[{"score": vector}]});
         let v = payload_with(
             json!([{"ok": true, "vulns": [
                 vuln("LOW", "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"),

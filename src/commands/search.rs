@@ -124,7 +124,11 @@ pub fn web_url(target: Target, value: &str, main_host: &str, cve_host: &str) -> 
         Target::Phone => Some(format!("{main}/phone/{encoded}")),
         Target::Crypto => Some(format!("{main}/crypto/{encoded}")),
         Target::Url => Some(format!("{main}/url?q={encoded}")),
-        Target::Cve => Some(format!("{}/cve/{}", cve_host.trim_end_matches('/'), value.to_uppercase())),
+        Target::Cve => Some(format!(
+            "{}/cve/{}",
+            cve_host.trim_end_matches('/'),
+            value.to_uppercase()
+        )),
         Target::Unknown => None,
     }
 }
@@ -160,17 +164,26 @@ pub fn open(value: &str, main_host: &str, cve_host: &str, print_only: bool) {
 
 #[cfg(target_os = "macos")]
 fn launch(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(url).status().map(|_| ())
+    std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
 fn launch(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("cmd").args(["/C", "start", "", url]).status().map(|_| ())
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .status()
+        .map(|_| ())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn launch(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open").arg(url).status().map(|_| ())
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .status()
+        .map(|_| ())
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -179,7 +192,9 @@ fn launch(url: &str) -> std::io::Result<()> {
 
 fn is_cve(s: &str) -> bool {
     let upper = s.to_uppercase();
-    let Some(rest) = upper.strip_prefix("CVE-") else { return false };
+    let Some(rest) = upper.strip_prefix("CVE-") else {
+        return false;
+    };
     let mut parts = rest.split('-');
     let year = parts.next().unwrap_or("");
     let seq = parts.next().unwrap_or("");
@@ -197,7 +212,10 @@ fn is_ip(s: &str) -> bool {
 fn is_mac(s: &str) -> bool {
     let separators = [':', '-'];
     let parts: Vec<&str> = s.split(separators).collect();
-    parts.len() == 6 && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+    parts.len() == 6
+        && parts
+            .iter()
+            .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 fn is_email(s: &str) -> bool {
@@ -224,14 +242,21 @@ fn is_crypto(s: &str) -> bool {
     }
     // Base58 legacy addresses: no 0, O, I or l, and no dots to confuse with hosts.
     if matches!(s.chars().next(), Some('1') | Some('3')) && (26..=35).contains(&s.len()) {
-        return s.chars().all(|c| c.is_ascii_alphanumeric() && !"0OIl".contains(c));
+        return s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() && !"0OIl".contains(c));
     }
     false
 }
 
 fn is_phone(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix('+') else { return false };
-    let digits: String = rest.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '.').collect();
+    let Some(rest) = s.strip_prefix('+') else {
+        return false;
+    };
+    let digits: String = rest
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '.')
+        .collect();
     (6..=15).contains(&digits.len()) && digits.chars().all(|c| c.is_ascii_digit())
 }
 
@@ -250,7 +275,9 @@ fn is_domain(s: &str) -> bool {
             && label.len() <= 63
             && !label.starts_with('-')
             && !label.ends_with('-')
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     })
 }
 
@@ -345,7 +372,13 @@ mod tests {
     #[test]
     fn a_trailing_slash_on_the_host_is_not_doubled() {
         assert_eq!(
-            web_url(Target::Ip, "8.8.8.8", "https://mlab.sh/", "https://vuln.mlab.sh/").unwrap(),
+            web_url(
+                Target::Ip,
+                "8.8.8.8",
+                "https://mlab.sh/",
+                "https://vuln.mlab.sh/"
+            )
+            .unwrap(),
             "https://mlab.sh/ip/8.8.8.8"
         );
     }

@@ -1,6 +1,6 @@
 [package]
 name = "mlab"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "CLI client for the mlab.sh threat intelligence and CVE APIs"
 license = "Apache-2.0"
@@ -9,6 +9,44 @@ repository = "https://github.com/mlab-sh/mlab-cli"
 readme = "README.md"
 keywords = ["security", "threat-intelligence", "cve", "cli"]
 categories = ["command-line-utilities"]
+
+# Debian packaging. The .deb ships on the GitHub release, nowhere else. The
+# release profile already strips the binary, so CI passes --no-strip: letting
+# cargo-deb strip it again would run the host strip against the aarch64 binary
+# and fail the cross build.
+# cargo-deb rewrites `target/release` to `target/<triple>/release` when it is
+# given --target, so one asset list covers both architectures.
+[package.metadata.deb]
+maintainer = "mlab <hello@mlab.sh>"
+section = "net"
+priority = "optional"
+extended-description = """\
+mlab is the command-line client for the mlab.sh threat-intelligence platform, \
+the CVE and dependency scanner at vuln.mlab.sh, and the threat-actor database \
+at actors.mlab.sh. It scans domains, IPs, files, URLs and crypto addresses, \
+pulls indicators out of text, gates CI builds on vulnerable dependencies, and \
+searches the CVE catalogue, with terminal output or raw JSON."""
+depends = "$auto"
+assets = [
+    ["target/release/mlab", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/mlab/README.md", "644"],
+    ["LICENSE", "usr/share/doc/mlab/copyright", "644"],
+]
+
+# RPM packaging, for dnf/yum. Unlike cargo-deb, the source paths here are taken
+# literally, so CI stages the cross-built binary at pkg/mlab first rather than
+# relying on a target rewrite that would silently package the wrong
+# architecture. auto-req is off for the same reason: deriving requirements
+# means running the host's find-requires against a foreign binary.
+[package.metadata.generate-rpm]
+summary = "CLI client for the mlab.sh threat intelligence and CVE APIs"
+license = "Apache-2.0"
+auto-req = "disabled"
+assets = [
+    { source = "pkg/mlab", dest = "/usr/bin/mlab", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/mlab/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/mlab/LICENSE", mode = "644", doc = true },
+]
 
 [[bin]]
 name = "mlab"

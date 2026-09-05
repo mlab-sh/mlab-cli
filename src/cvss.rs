@@ -53,8 +53,14 @@ fn metric(params: &[(&str, &str)], key: &str) -> Option<&'static str> {
         .find(|(k, _)| *k == key)
         .map(|(_, v)| *v)
         .map(|v| match v {
-            "N" => "N", "A" => "A", "L" => "L", "P" => "P",
-            "H" => "H", "R" => "R", "C" => "C", "U" => "U",
+            "N" => "N",
+            "A" => "A",
+            "L" => "L",
+            "P" => "P",
+            "H" => "H",
+            "R" => "R",
+            "C" => "C",
+            "U" => "U",
             _ => "?",
         })
 }
@@ -76,22 +82,45 @@ pub fn base_score(vector: &str) -> Option<f64> {
     let scope_changed = metric(&params, "S") == Some("C");
 
     let av = match metric(&params, "AV")? {
-        "N" => 0.85, "A" => 0.62, "L" => 0.55, "P" => 0.2, _ => return None,
+        "N" => 0.85,
+        "A" => 0.62,
+        "L" => 0.55,
+        "P" => 0.2,
+        _ => return None,
     };
     let ac = match metric(&params, "AC")? {
-        "L" => 0.77, "H" => 0.44, _ => return None,
+        "L" => 0.77,
+        "H" => 0.44,
+        _ => return None,
     };
     let ui = match metric(&params, "UI")? {
-        "N" => 0.85, "R" => 0.62, _ => return None,
+        "N" => 0.85,
+        "R" => 0.62,
+        _ => return None,
     };
     let pr = match metric(&params, "PR")? {
         "N" => 0.85,
-        "L" => if scope_changed { 0.68 } else { 0.62 },
-        "H" => if scope_changed { 0.5 } else { 0.27 },
+        "L" => {
+            if scope_changed {
+                0.68
+            } else {
+                0.62
+            }
+        }
+        "H" => {
+            if scope_changed {
+                0.5
+            } else {
+                0.27
+            }
+        }
         _ => return None,
     };
     let impact_of = |m: &str| match m {
-        "H" => Some(0.56), "L" => Some(0.22), "N" => Some(0.0), _ => None,
+        "H" => Some(0.56),
+        "L" => Some(0.22),
+        "N" => Some(0.0),
+        _ => None,
     };
     let c = impact_of(metric(&params, "C")?)?;
     let i = impact_of(metric(&params, "I")?)?;
@@ -126,7 +155,9 @@ pub fn score_of(vuln: &serde_json::Value) -> Option<f64> {
         .flatten()
         .filter_map(|entry| entry.get("score").and_then(|s| s.as_str()))
         .filter_map(base_score)
-        .fold(None, |acc: Option<f64>, s| Some(acc.map_or(s, |a: f64| a.max(s))))
+        .fold(None, |acc: Option<f64>, s| {
+            Some(acc.map_or(s, |a: f64| a.max(s)))
+        })
 }
 
 #[cfg(test)]
@@ -136,10 +167,22 @@ mod tests {
     #[test]
     fn known_vectors_score_as_the_specification_says() {
         // Reference vectors from the CVSS v3.1 examples.
-        assert_eq!(base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"), Some(9.8));
-        assert_eq!(base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"), Some(7.5));
-        assert_eq!(base_score("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"), Some(5.5));
-        assert_eq!(base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"), Some(6.1));
+        assert_eq!(
+            base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+            Some(9.8)
+        );
+        assert_eq!(
+            base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"),
+            Some(7.5)
+        );
+        assert_eq!(
+            base_score("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"),
+            Some(5.5)
+        );
+        assert_eq!(
+            base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"),
+            Some(6.1)
+        );
     }
 
     #[test]

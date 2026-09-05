@@ -12,10 +12,10 @@ use base64::Engine;
 use colored::Colorize;
 use serde_json::Value;
 
-use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -118,7 +118,14 @@ pub fn email(client: &MlabClient, address: &str, json: bool) {
             icon: "📧",
             title: "Email Lookup",
             subject: address,
-            highlights: &["email", "domain", "mailbox_type", "is_role", "is_free_provider", "is_disposable"],
+            highlights: &[
+                "email",
+                "domain",
+                "mailbox_type",
+                "is_role",
+                "is_free_provider",
+                "is_disposable",
+            ],
         },
     );
 }
@@ -134,7 +141,15 @@ pub fn phone(client: &MlabClient, number: &str, json: bool) {
             icon: "📞",
             title: "Phone Lookup",
             subject: number,
-            highlights: &["input", "verdict", "valid", "country_code", "region", "line_type", "allocated_operator"],
+            highlights: &[
+                "input",
+                "verdict",
+                "valid",
+                "country_code",
+                "region",
+                "line_type",
+                "allocated_operator",
+            ],
         },
     );
 }
@@ -150,7 +165,15 @@ pub fn mac(client: &MlabClient, address: &str, json: bool) {
             icon: "🖧",
             title: "MAC Lookup",
             subject: address,
-            highlights: &["mac", "verdict", "vendor", "oui", "cast", "administration", "randomized"],
+            highlights: &[
+                "mac",
+                "verdict",
+                "vendor",
+                "oui",
+                "cast",
+                "administration",
+                "randomized",
+            ],
         },
     );
 }
@@ -158,7 +181,13 @@ pub fn mac(client: &MlabClient, address: &str, json: bool) {
 /// Pull indicators out of whatever the analyst pasted — a report, an email, a
 /// log. Reads a file, or stdin when the path is `-`, which is the point: it
 /// belongs at the end of a pipe.
-pub fn ioc(client: &MlabClient, source: &str, country: Option<&str>, risk: Option<&str>, json: bool) {
+pub fn ioc(
+    client: &MlabClient,
+    source: &str,
+    country: Option<&str>,
+    risk: Option<&str>,
+    json: bool,
+) {
     let text = read_input(source);
     let text = String::from_utf8_lossy(&text).to_string();
 
@@ -225,7 +254,10 @@ pub fn bash(client: &MlabClient, source: &str, json: bool) {
         fetch(client.post_json("/scan/file/bash", &payload))
     });
     let posted: Value = parse_or_exit(&posted, "bash analysis");
-    let sha256 = posted.get("sha256").and_then(|s| s.as_str()).unwrap_or_default();
+    let sha256 = posted
+        .get("sha256")
+        .and_then(|s| s.as_str())
+        .unwrap_or_default();
 
     if sha256.is_empty() {
         ApiError::new(None, "the API accepted the script but returned no hash.").report();
@@ -280,7 +312,12 @@ pub fn render_panel(panel: &Panel, v: &Value) {
     let div = format!("  {}", "─".repeat(72));
 
     println!();
-    println!("  {} {}  {}", panel.icon, panel.title, panel.subject.cyan().bold());
+    println!(
+        "  {} {}  {}",
+        panel.icon,
+        panel.title,
+        panel.subject.cyan().bold()
+    );
     println!("{}", div.dimmed());
 
     let Some(obj) = v.as_object() else {
@@ -307,7 +344,9 @@ pub fn render_panel(panel: &Panel, v: &Value) {
 
     // Nested groups (score, formats, domain_scan, host_context, resolution…)
     for (key, val) in obj {
-        let Some(inner) = val.as_object() else { continue };
+        let Some(inner) = val.as_object() else {
+            continue;
+        };
         if inner.is_empty() {
             continue;
         }
@@ -330,7 +369,9 @@ pub fn render_panel(panel: &Panel, v: &Value) {
 }
 
 fn print_findings(findings: Option<&Value>) {
-    let Some(list) = findings.and_then(|f| f.as_array()) else { return };
+    let Some(list) = findings.and_then(|f| f.as_array()) else {
+        return;
+    };
     if list.is_empty() {
         return;
     }
@@ -364,10 +405,17 @@ fn render_iocs(v: &Value, title: &str, subject: &str) {
     let total = v.get("ioc_total").and_then(|t| t.as_u64()).unwrap_or(0);
 
     println!();
-    println!("  {} {}  {}", "🧾", title, subject.cyan().bold());
+    println!("  🧾 {}  {}", title, subject.cyan().bold());
     println!("{}", div.dimmed());
-    println!("  {:<14} {}", "Indicators:".dimmed(), total.to_string().bold());
-    if v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false) {
+    println!(
+        "  {:<14} {}",
+        "Indicators:".dimmed(),
+        total.to_string().bold()
+    );
+    if v.get("truncated")
+        .and_then(|t| t.as_bool())
+        .unwrap_or(false)
+    {
         println!(
             "  {}",
             "Output truncated — the input exceeded the extraction cap.".yellow()
@@ -376,7 +424,9 @@ fn render_iocs(v: &Value, title: &str, subject: &str) {
 
     if let Some(groups) = v.get("iocs").and_then(|i| i.as_object()) {
         for (kind, entries) in groups {
-            let Some(list) = entries.as_array() else { continue };
+            let Some(list) = entries.as_array() else {
+                continue;
+            };
             println!();
             println!(
                 "  {} ({})",
@@ -409,10 +459,13 @@ fn render_iocs(v: &Value, title: &str, subject: &str) {
 fn render_bash(v: &Value) {
     let div = format!("  {}", "─".repeat(72));
     let file = v.get("file").cloned().unwrap_or(Value::Null);
-    let name = file.get("filename").and_then(|f| f.as_str()).unwrap_or("script");
+    let name = file
+        .get("filename")
+        .and_then(|f| f.as_str())
+        .unwrap_or("script");
 
     println!();
-    println!("  {} {}  {}", "📜", "Shell Script Analysis", name.cyan().bold());
+    println!("  📜 Shell Script Analysis  {}", name.cyan().bold());
     println!("{}", div.dimmed());
     if let Some(obj) = file.as_object() {
         for (k, val) in obj {
@@ -424,7 +477,11 @@ fn render_bash(v: &Value) {
 
     if let Some(list) = v.get("suspicious").and_then(|s| s.as_array()) {
         println!();
-        println!("  {} ({})", "Suspicious Patterns".bold().underline(), list.len());
+        println!(
+            "  {} ({})",
+            "Suspicious Patterns".bold().underline(),
+            list.len()
+        );
         if list.is_empty() {
             println!("    {}", "Nothing flagged.".dimmed());
         }
@@ -432,7 +489,10 @@ fn render_bash(v: &Value) {
             match item {
                 Value::String(s) => println!("    {} {}", "▲".yellow(), s),
                 other => {
-                    let severity = other.get("severity").and_then(|s| s.as_str()).unwrap_or("medium");
+                    let severity = other
+                        .get("severity")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("medium");
                     let title = other
                         .get("title")
                         .or_else(|| other.get("label"))
@@ -454,7 +514,9 @@ fn render_bash(v: &Value) {
             println!();
             println!("  {} ({})", "Indicators".bold().underline(), total);
             for (kind, entries) in groups {
-                let Some(list) = entries.as_array() else { continue };
+                let Some(list) = entries.as_array() else {
+                    continue;
+                };
                 for entry in list {
                     let value = entry
                         .get("value")
@@ -475,7 +537,7 @@ fn render_network(v: &Value, subject: &str) {
     let requests = v.get("requests").and_then(|r| r.as_array());
 
     println!();
-    println!("  {} {}  {}", "🌐", "Network Capture", subject.cyan().bold());
+    println!("  🌐 Network Capture  {}", subject.cyan().bold());
     println!("{}", div.dimmed());
 
     let Some(list) = requests else {
@@ -485,13 +547,20 @@ fn render_network(v: &Value, subject: &str) {
         return;
     };
 
-    let failed = list.iter().filter(|r| r.get("failed").and_then(|f| f.as_bool()).unwrap_or(false)).count();
+    let failed = list
+        .iter()
+        .filter(|r| r.get("failed").and_then(|f| f.as_bool()).unwrap_or(false))
+        .count();
     println!(
         "  {:<14} {}   {:<10} {}   {:<8} {}",
         "Requests:".dimmed(),
         list.len().to_string().bold(),
         "Failed:".dimmed(),
-        if failed > 0 { failed.to_string().red().bold() } else { failed.to_string().normal() },
+        if failed > 0 {
+            failed.to_string().red().bold()
+        } else {
+            failed.to_string().normal()
+        },
         "Bytes:".dimmed(),
         v.get("totalBytes").and_then(|b| b.as_u64()).unwrap_or(0),
     );
@@ -518,7 +587,9 @@ fn render_network(v: &Value, subject: &str) {
             "  {:<7} {:<7} {:<14} {:<10} {}",
             method,
             status,
-            r.get("resourceType").and_then(|t| t.as_str()).unwrap_or("-"),
+            r.get("resourceType")
+                .and_then(|t| t.as_str())
+                .unwrap_or("-"),
             r.get("encodedBytes").and_then(|b| b.as_u64()).unwrap_or(0),
             r.get("url").and_then(|u| u.as_str()).unwrap_or("").dimmed(),
         );
@@ -614,7 +685,13 @@ fn is_scalar(v: &Value) -> bool {
 fn render_value(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
-        Value::Bool(b) => if *b { "yes".to_string() } else { "no".to_string() },
+        Value::Bool(b) => {
+            if *b {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            }
+        }
         Value::Number(n) => n.to_string(),
         other => other.to_string(),
     }
@@ -684,7 +761,14 @@ mod tests {
 
     #[test]
     fn long_arrays_are_summarized_rather_than_dumped() {
-        let a = vec![json!("a"), json!("b"), json!("c"), json!("d"), json!("e"), json!("f")];
+        let a = vec![
+            json!("a"),
+            json!("b"),
+            json!("c"),
+            json!("d"),
+            json!("e"),
+            json!("f"),
+        ];
         assert_eq!(summarize_array(&a), "a, b, c, d … (+2)");
         assert_eq!(summarize_array(&a[..2]), "a, b");
     }

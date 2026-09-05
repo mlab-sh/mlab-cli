@@ -5,10 +5,10 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 use serde::Deserialize;
 
-use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
+use crate::output;
 use crate::ui::{self, Spinner};
 use crate::util::urlencode;
 
@@ -45,10 +45,9 @@ enum Poll {
 }
 
 fn poll_domain_status(client: &MlabClient, domain: &str) -> Poll {
-    let raw = crate::commands::body(client.get(&format!(
-        "/scan/domain/status?domain={}",
-        urlencode(domain)
-    )));
+    let raw = crate::commands::body(
+        client.get(&format!("/scan/domain/status?domain={}", urlencode(domain))),
+    );
 
     let raw = match raw {
         Ok(b) => b,
@@ -140,7 +139,9 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
             Poll::Fatal(e) => abort_polling(e, domain),
             Poll::Transient(msg) => {
                 consecutive_errors += 1;
-                spinner.set(format!("Scanning {domain} — retrying ({consecutive_errors}/5)"));
+                spinner.set(format!(
+                    "Scanning {domain} — retrying ({consecutive_errors}/5)"
+                ));
                 if consecutive_errors >= 5 {
                     abort_polling(
                         ApiError::new(None, format!("{msg} (5 consecutive failures)")),
@@ -233,7 +234,7 @@ fn print_ip_ui(r: &IpResult) {
     let div = format!("  {}", "─".repeat(60));
 
     println!();
-    println!("  {} IP Lookup  {}", "🔍", r.ip.cyan().bold());
+    println!("  🔍 IP Lookup  {}", r.ip.cyan().bold());
     println!("{}", div.dimmed());
 
     if r.reserved {
@@ -309,12 +310,7 @@ fn print_ip_ui(r: &IpResult) {
     }
 
     if let (Some(lat), Some(lon)) = (&r.lat, &r.lon) {
-        println!(
-            "  {:<14} {}, {}",
-            "Coordinates:".dimmed(),
-            lat,
-            lon
-        );
+        println!("  {:<14} {}, {}", "Coordinates:".dimmed(), lat, lon);
     }
 
     if let Some(tz) = &r.timezone {
@@ -380,7 +376,9 @@ pub fn crypto(client: &MlabClient, addresses: &[String], chain: Option<&str>, js
     if let Some(c) = chain {
         path.push_str(&format!("&chain={}", urlencode(c)));
     }
-    let body = ui::with_spinner(&format!("Looking up {address}"), || fetch(client.get(&path)));
+    let body = ui::with_spinner(&format!("Looking up {address}"), || {
+        fetch(client.get(&path))
+    });
 
     if output::wants_json(json) {
         print_json(&body);
@@ -391,7 +389,7 @@ pub fn crypto(client: &MlabClient, addresses: &[String], chain: Option<&str>, js
 
     let div = format!("  {}", "─".repeat(60));
     println!();
-    println!("  {} Crypto Lookup  {}", "🪙", address.cyan().bold());
+    println!("  🪙 Crypto Lookup  {}", address.cyan().bold());
     println!("{}", div.dimmed());
     let resolved_chain = v
         .get("chain")
@@ -445,7 +443,13 @@ pub fn file(client: &MlabClient, path: &str, follow: bool, json: bool) {
     }
 
     let body = ui::with_spinner(
-        &format!("Uploading {}", file_path.file_name().and_then(|n| n.to_str()).unwrap_or(path)),
+        &format!(
+            "Uploading {}",
+            file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+        ),
         || fetch(client.upload_file(file_path)),
     );
 
@@ -498,10 +502,9 @@ fn follow_file(client: &MlabClient, sha256: &str, json: bool) {
     let mut consecutive_errors = 0u32;
 
     loop {
-        let raw = crate::commands::body(client.get(&format!(
-            "/scan/file/results?sha256={}",
-            urlencode(sha256)
-        )));
+        let raw = crate::commands::body(
+            client.get(&format!("/scan/file/results?sha256={}", urlencode(sha256))),
+        );
 
         let status = match raw {
             Ok(b) => {

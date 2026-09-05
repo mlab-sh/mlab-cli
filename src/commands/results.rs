@@ -1,10 +1,10 @@
 use colored::Colorize;
 use serde::Deserialize;
 
-use crate::output;
 use crate::client::MlabClient;
-use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::commands::ssl::{render_table, SslCert};
+use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -132,7 +132,7 @@ fn print_domain_ui(r: &DomainResults) {
     };
 
     println!();
-    println!("  {} Domain Scan Results  [{}]", "🌐", status_badge);
+    println!("  🌐 Domain Scan Results  [{}]", status_badge);
     println!("{}", div.dimmed());
     println!("  {:<12} {}", "Domain:".dimmed(), r.domain.cyan().bold());
     if !r.scan_date.is_empty() {
@@ -210,7 +210,12 @@ fn print_domain_ui(r: &DomainResults) {
             println!("    {:<8} {} {}", "SPF".bold(), "✔".green(), spf);
         }
         _ => {
-            println!("    {:<8} {} {}", "SPF".bold(), "✘".red(), "Not configured".red());
+            println!(
+                "    {:<8} {} {}",
+                "SPF".bold(),
+                "✘".red(),
+                "Not configured".red()
+            );
         }
     }
 
@@ -300,11 +305,7 @@ fn print_file_content(name: &str, content: &str) {
         || trimmed.to_lowercase().contains("error 404")
         || trimmed.to_lowercase().contains("not found")
     {
-        println!(
-            "    {:<16} {}",
-            name.bold(),
-            "Not found".dimmed()
-        );
+        println!("    {:<16} {}", name.bold(), "Not found".dimmed());
     } else {
         println!("    {}", name.bold());
         let lines: Vec<&str> = trimmed.lines().collect();
@@ -342,10 +343,7 @@ pub fn file(client: &MlabClient, sha256: &str, tool: Option<&str>, json: bool) {
     }
 
     let body = ui::with_spinner("Fetching file results", || {
-        fetch(client.get(&format!(
-            "/scan/file/results?sha256={}",
-            urlencode(sha256)
-        )))
+        fetch(client.get(&format!("/scan/file/results?sha256={}", urlencode(sha256))))
     });
 
     if output::wants_json(json) {
@@ -378,7 +376,10 @@ fn tool_output(client: &MlabClient, sha256: &str, tool: &str, json: bool) {
     if v.get("is_json").and_then(|b| b.as_bool()).unwrap_or(false) {
         // Stored as a JSON string; pretty-print it rather than showing one line.
         match serde_json::from_str::<serde_json::Value>(output) {
-            Ok(parsed) => println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or_default()),
+            Ok(parsed) => println!(
+                "{}",
+                serde_json::to_string_pretty(&parsed).unwrap_or_default()
+            ),
             Err(_) => println!("{output}"),
         }
     } else {
@@ -388,7 +389,10 @@ fn tool_output(client: &MlabClient, sha256: &str, tool: &str, json: bool) {
 
 fn print_file_ui(r: &serde_json::Value) {
     let div = format!("  {}", "─".repeat(80));
-    let status = r.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+    let status = r
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown");
 
     let status_badge = match status {
         "completed" => "✔ completed".green().bold(),
@@ -400,11 +404,14 @@ fn print_file_ui(r: &serde_json::Value) {
     };
 
     println!();
-    println!("  {} File Scan Results  [{}]", "📄", status_badge);
+    println!("  📄 File Scan Results  [{}]", status_badge);
     println!("{}", div.dimmed());
 
     if let Some(error) = r.get("error") {
-        let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("The scan failed.");
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("The scan failed.");
         let reason = error.get("reason").and_then(|m| m.as_str()).unwrap_or("");
         println!("  {} {}", "✖".red().bold(), message.red());
         if !reason.is_empty() {
@@ -440,7 +447,12 @@ fn print_file_ui(r: &serde_json::Value) {
 
     // ── Hashes ──
     println!("  {}", "Hashes".bold().underline());
-    for (label, key) in [("SHA-256:", "sha256"), ("SHA-1:", "sha1"), ("MD5:", "md5"), ("ssdeep:", "ssdeep")] {
+    for (label, key) in [
+        ("SHA-256:", "sha256"),
+        ("SHA-1:", "sha1"),
+        ("MD5:", "md5"),
+        ("ssdeep:", "ssdeep"),
+    ] {
         if let Some(value) = file.get(key).and_then(|v| v.as_str()) {
             if !value.is_empty() {
                 println!("  {:<12} {}", label.dimmed(), value);
@@ -450,8 +462,16 @@ fn print_file_ui(r: &serde_json::Value) {
     println!();
 
     // ── Progress ──
-    let done = r.get("tools_done").or_else(|| r.get("jobs_completed")).and_then(|v| v.as_u64()).unwrap_or(0);
-    let total = r.get("tools_total").or_else(|| r.get("jobs_total")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let done = r
+        .get("tools_done")
+        .or_else(|| r.get("jobs_completed"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total = r
+        .get("tools_total")
+        .or_else(|| r.get("jobs_total"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     println!(
         "  {} {}  {}",
         "Tools:".bold(),
@@ -503,8 +523,13 @@ fn print_tools(r: &serde_json::Value) {
                 "  {:<18} {:<12} {:<10} {:<10} {}",
                 t.get("tool").and_then(|x| x.as_str()).unwrap_or("-"),
                 coloured,
-                t.get("exit_code").map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
-                t.get("duration_ms").and_then(|d| d.as_u64()).map(|d| format!("{d} ms")).unwrap_or_else(|| "-".into()),
+                t.get("exit_code")
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                t.get("duration_ms")
+                    .and_then(|d| d.as_u64())
+                    .map(|d| format!("{d} ms"))
+                    .unwrap_or_else(|| "-".into()),
                 format_size(t.get("output_bytes").and_then(|b| b.as_u64()).unwrap_or(0)).dimmed(),
             );
             if let Some(note) = t.get("note").and_then(|n| n.as_str()) {
@@ -519,9 +544,19 @@ fn print_tools(r: &serde_json::Value) {
 
     if let Some(jobs) = r.get("analysis").and_then(|a| a.as_array()) {
         for job in jobs {
-            let name = job.get("job_name").and_then(|n| n.as_str()).unwrap_or("job");
+            let name = job
+                .get("job_name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("job");
             println!();
-            println!("  {} {}", "▶".cyan(), format!(" {} ", name.to_uppercase()).on_cyan().white().bold());
+            println!(
+                "  {} {}",
+                "▶".cyan(),
+                format!(" {} ", name.to_uppercase())
+                    .on_cyan()
+                    .white()
+                    .bold()
+            );
             let data = job.get("data").cloned().unwrap_or_default();
             let text = match &data {
                 serde_json::Value::String(s) => s.clone(),
@@ -536,13 +571,17 @@ fn print_tools(r: &serde_json::Value) {
 }
 
 fn print_observations(r: &serde_json::Value) {
-    let Some(groups) = r.get("observations").and_then(|o| o.as_object()) else { return };
+    let Some(groups) = r.get("observations").and_then(|o| o.as_object()) else {
+        return;
+    };
     if groups.is_empty() {
         return;
     }
     println!("  {}", "Indicators".bold().underline());
     for (kind, entries) in groups {
-        let Some(list) = entries.as_array() else { continue };
+        let Some(list) = entries.as_array() else {
+            continue;
+        };
         println!("    {} ({})", kind.bold(), list.len());
         for entry in list.iter().take(20) {
             let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
@@ -557,7 +596,9 @@ fn print_observations(r: &serde_json::Value) {
 }
 
 fn print_sightings(r: &serde_json::Value) {
-    let Some(list) = r.get("sightings").and_then(|s| s.as_array()) else { return };
+    let Some(list) = r.get("sightings").and_then(|s| s.as_array()) else {
+        return;
+    };
     if list.is_empty() {
         return;
     }
@@ -567,7 +608,10 @@ fn print_sightings(r: &serde_json::Value) {
     for s in list.iter().take(20) {
         println!(
             "    {:<12} {}",
-            s.get("kind").and_then(|k| k.as_str()).unwrap_or("-").dimmed(),
+            s.get("kind")
+                .and_then(|k| k.as_str())
+                .unwrap_or("-")
+                .dimmed(),
             s.get("value").and_then(|v| v.as_str()).unwrap_or(""),
         );
     }
@@ -612,4 +656,3 @@ fn progress_bar(done: u32, total: u32, width: usize) -> String {
 
     format!("{}{}", color_bar, "░".repeat(empty).dimmed())
 }
-

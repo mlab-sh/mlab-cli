@@ -1,9 +1,9 @@
 use colored::Colorize;
 use serde::Deserialize;
 
-use crate::output;
 use crate::client::HostClient;
 use crate::commands::vuln_body;
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
@@ -145,7 +145,9 @@ pub fn search(client: &HostClient, query: &str, opts: &SearchOptions, json: bool
         path.push_str(&format!("&limit={v}"));
     }
 
-    let body = ui::with_spinner(&format!("Searching CVEs for {query}"), || fetch(client, &path));
+    let body = ui::with_spinner(&format!("Searching CVEs for {query}"), || {
+        fetch(client, &path)
+    });
 
     if output::wants_json(json) {
         crate::commands::print_json(&body);
@@ -168,11 +170,7 @@ fn print_pagination_hint(r: &SearchResponse, opts: &SearchOptions) {
     }
     println!(
         "  {}",
-        format!(
-            "More results — rerun with --page {}",
-            opts.page + 1
-        )
-        .dimmed()
+        format!("More results — rerun with --page {}", opts.page + 1).dimmed()
     );
     println!();
 }
@@ -193,7 +191,7 @@ pub fn latest(client: &HostClient, json: bool) {
     }
 
     println!();
-    println!("  {} CVEs published in the last 7 days", "🆕".to_string());
+    println!("  🆕 CVEs published in the last 7 days");
     print_summary_list(&r.cves, r.total_results, r.start_index, r.results_per_page);
 }
 
@@ -252,9 +250,9 @@ fn print_summary_list(cves: &[CveSummary], total: u64, start: u64, per_page: u64
         let date = c.published.split('T').next().unwrap_or("");
 
         println!(
-            "  {} {} {} {} {}",
+            "  {} [{}] {} {} {}",
             c.id.cyan().bold(),
-            format!("[{}]", color_severity(sev)),
+            color_severity(sev),
             format!("CVSS {score}").bold(),
             date.dimmed(),
             kev,
@@ -275,7 +273,7 @@ fn print_detail(d: &CveDetail) {
     };
 
     println!();
-    println!("  {} {}{}", "🛡 ".to_string(), d.id.cyan().bold(), kev_badge);
+    println!("  🛡  {}{}", d.id.cyan().bold(), kev_badge);
     println!("{}", div.dimmed());
 
     if let Some(sev) = &d.cvss_severity {
@@ -342,7 +340,11 @@ fn print_detail(d: &CveDetail) {
 
     if !d.references.is_empty() {
         println!();
-        println!("  {} ({})", "References".bold().underline(), d.references.len());
+        println!(
+            "  {} ({})",
+            "References".bold().underline(),
+            d.references.len()
+        );
         for r in d.references.iter().take(15) {
             let tags = if r.tags.is_empty() {
                 String::new()
@@ -447,7 +449,13 @@ pub fn sources(client: &HostClient, json: bool) {
     render_rows(&body, "🗂", "Advisory Sources");
 }
 
-pub fn advisories(client: &HostClient, cve: Option<&str>, country: Option<&str>, limit: Option<u32>, json: bool) {
+pub fn advisories(
+    client: &HostClient,
+    cve: Option<&str>,
+    country: Option<&str>,
+    limit: Option<u32>,
+    json: bool,
+) {
     let mut path = String::from("/api/v1/advisories?");
     if let Some(v) = cve {
         path.push_str(&format!("cve={}&", urlencode(v)));
@@ -467,16 +475,15 @@ pub fn advisories(client: &HostClient, cve: Option<&str>, country: Option<&str>,
 
     let v: serde_json::Value = crate::commands::parse_or_exit(&body, "advisories");
     // Two shapes: `?cve=` answers an object, the listing answers an array.
-    let rows = v
-        .get("advisories")
-        .cloned()
-        .unwrap_or(v.clone());
+    let rows = v.get("advisories").cloned().unwrap_or(v.clone());
     render_value_rows(&rows, "🏛", "Advisories");
 }
 
 pub fn vendor_months(client: &HostClient, vendor: &str, year: u32, json: bool) {
     let path = format!("/api/v1/vendor/{}/months?year={year}", urlencode(vendor));
-    let body = ui::with_spinner(&format!("Fetching {vendor} {year}"), || fetch(client, &path));
+    let body = ui::with_spinner(&format!("Fetching {vendor} {year}"), || {
+        fetch(client, &path)
+    });
 
     if output::wants_json(json) {
         crate::commands::print_json(&body);
@@ -484,12 +491,20 @@ pub fn vendor_months(client: &HostClient, vendor: &str, year: u32, json: bool) {
     }
 
     let v: serde_json::Value = crate::commands::parse_or_exit(&body, "vendor");
-    let months = v.get("months").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    let months = v
+        .get("months")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
     let counts: Vec<u64> = months.iter().map(|m| m.as_u64().unwrap_or(0)).collect();
     let peak = counts.iter().copied().max().unwrap_or(0).max(1);
 
     println!();
-    println!("  {} {} — {}", "📈", vendor.cyan().bold(), year.to_string().bold());
+    println!(
+        "  📈 {} — {}",
+        vendor.cyan().bold(),
+        year.to_string().bold()
+    );
     println!("{}", format!("  {}", "─".repeat(56)).dimmed());
     for (i, count) in counts.iter().enumerate() {
         let width = ((*count as f64 / peak as f64) * 30.0).round() as usize;
@@ -504,7 +519,9 @@ pub fn vendor_months(client: &HostClient, vendor: &str, year: u32, json: bool) {
     println!();
 }
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// CSV and RSS live at the site root, NOT under `/api/v1` — the paths the Node
 /// SDK documents (`/api/v1/export/csv`, `/api/v1/rss`) do not exist.
@@ -579,5 +596,15 @@ fn csv_summaries(cves: &[CveSummary]) {
             ]
         })
         .collect();
-    output::csv_table(&["id", "published", "severity", "cvss", "in_kev", "description"], &rows);
+    output::csv_table(
+        &[
+            "id",
+            "published",
+            "severity",
+            "cvss",
+            "in_kev",
+            "description",
+        ],
+        &rows,
+    );
 }

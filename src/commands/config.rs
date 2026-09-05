@@ -9,7 +9,13 @@ use colored::Colorize;
 use crate::config::{Config, Profile};
 use crate::error::{ApiError, ErrorKind};
 
-const KEYS: &[&str] = &["hostname", "cve_hostname", "actors_hostname", "api_key", "vuln_token"];
+const KEYS: &[&str] = &[
+    "hostname",
+    "cve_hostname",
+    "actors_hostname",
+    "api_key",
+    "vuln_token",
+];
 const SECRETS: &[&str] = &["api_key", "vuln_token"];
 
 pub fn path() {
@@ -20,7 +26,7 @@ pub fn list(profile: Option<&str>, reveal: bool) {
     let config = Config::load_with_profile(profile);
 
     println!();
-    println!("  {} {}", "⚙", Config::path().display().to_string().dimmed());
+    println!("  ⚙ {}", Config::path().display().to_string().dimmed());
     if let Some(name) = profile {
         println!("  {:<18} {}", "Profile:".dimmed(), name.cyan());
     }
@@ -67,13 +73,20 @@ pub fn set(key: &str, value: &str, profile: Option<&str>) {
     }
     config.save();
 
-    let shown = if SECRETS.contains(&key) { mask(value) } else { value.to_string() };
+    let shown = if SECRETS.contains(&key) {
+        mask(value)
+    } else {
+        value.to_string()
+    };
     println!(
         "{} {} = {}{}",
         "ok:".green().bold(),
         key,
         shown,
-        profile.map(|p| format!("  (profile {p})")).unwrap_or_default().dimmed()
+        profile
+            .map(|p| format!("  (profile {p})"))
+            .unwrap_or_default()
+            .dimmed()
     );
 }
 
@@ -152,7 +165,14 @@ pub fn mask(secret: &str) -> String {
         return "•".repeat(chars.len().max(1));
     }
     let head: String = chars.iter().take(4).collect();
-    let tail: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = chars
+        .iter()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{head}…{tail}")
 }
 
@@ -175,11 +195,16 @@ mod tests {
 
     #[test]
     fn secrets_are_masked_unless_explicitly_revealed() {
-        let mut config = Config::default();
-        config.api_key = "mlab_abcdefghijklmnop".to_string();
+        let config = Config {
+            api_key: "mlab_abcdefghijklmnop".to_string(),
+            ..Default::default()
+        };
 
         assert_eq!(display_value(&config, "api_key", false), "mlab…mnop");
-        assert_eq!(display_value(&config, "api_key", true), "mlab_abcdefghijklmnop");
+        assert_eq!(
+            display_value(&config, "api_key", true),
+            "mlab_abcdefghijklmnop"
+        );
     }
 
     #[test]

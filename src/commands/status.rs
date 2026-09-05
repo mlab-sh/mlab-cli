@@ -1,17 +1,14 @@
 use colored::Colorize;
 
-use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::output;
 use crate::ui;
 use crate::util::urlencode;
 
 pub fn domain(client: &MlabClient, domain: &str, json: bool) {
     let body = ui::with_spinner(&format!("Checking {domain}"), || {
-        fetch(client.get(&format!(
-            "/scan/domain/status?domain={}",
-            urlencode(domain)
-        )))
+        fetch(client.get(&format!("/scan/domain/status?domain={}", urlencode(domain))))
     });
 
     if output::wants_json(json) {
@@ -20,11 +17,14 @@ pub fn domain(client: &MlabClient, domain: &str, json: bool) {
     }
 
     let v: serde_json::Value = parse_or_exit(&body, "status");
-    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+    let status = v
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("unknown");
     let message = v.get("message").and_then(|m| m.as_str()).unwrap_or("");
 
     println!();
-    println!("  {} {}  {}", "🌐", domain.cyan().bold(), badge(status));
+    println!("  🌐 {}  {}", domain.cyan().bold(), badge(status));
     if !message.is_empty() {
         println!("  {}", message.dimmed());
     }

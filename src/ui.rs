@@ -116,7 +116,11 @@ impl Spinner {
             None
         };
 
-        Self { state, handle, start }
+        Self {
+            state,
+            handle,
+            start,
+        }
     }
 
     /// A spinner that also reports progress through a known number of steps.
@@ -144,7 +148,11 @@ impl Spinner {
     /// Stop, then leave a one-line summary in place of the spinner.
     pub fn succeed(mut self, message: impl AsRef<str>) {
         self.shutdown();
-        note("✔".green().bold(), message.as_ref(), Some(self.start.elapsed()));
+        note(
+            "✔".green().bold(),
+            message.as_ref(),
+            Some(self.start.elapsed()),
+        );
     }
 
     pub fn warn(mut self, message: impl AsRef<str>) {
@@ -181,14 +189,14 @@ fn animate(state: Arc<State>, start: Instant) {
                 drawn = true;
             }
 
-            let message = state
-                .message
-                .lock()
-                .map(|m| m.clone())
-                .unwrap_or_default();
+            let message = state.message.lock().map(|m| m.clone()).unwrap_or_default();
             let steps = state.steps.load(Ordering::SeqCst);
             let counter = if steps > 0 {
-                format!(" [{}/{}]", state.step.load(Ordering::SeqCst).min(steps), steps)
+                format!(
+                    " [{}/{}]",
+                    state.step.load(Ordering::SeqCst).min(steps),
+                    steps
+                )
             } else {
                 String::new()
             };

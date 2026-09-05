@@ -1,9 +1,9 @@
 use colored::Colorize;
 
-use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
 use crate::error::{ApiError, ErrorKind};
+use crate::output;
 use crate::ui;
 
 pub fn run(client: &MlabClient, json: bool) {
@@ -20,8 +20,8 @@ pub fn run(client: &MlabClient, json: bool) {
     // The API answers 200 with a generic greeting when the key is unknown, so
     // the status code alone cannot tell an authenticated call from a rejected
     // one. An organization (or the explicit api_key marker) is the real signal.
-    let authenticated = !organization.is_empty()
-        || v.get("auth").and_then(|a| a.as_str()) == Some("api_key");
+    let authenticated =
+        !organization.is_empty() || v.get("auth").and_then(|a| a.as_str()) == Some("api_key");
 
     if !authenticated {
         ApiError {

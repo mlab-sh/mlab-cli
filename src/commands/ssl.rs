@@ -1,9 +1,9 @@
 use colored::Colorize;
 use serde::Deserialize;
 
-use crate::output;
 use crate::client::MlabClient;
 use crate::commands::{fetch, parse_or_exit, print_json};
+use crate::output;
 use crate::ui;
 use crate::util::{days_until, urlencode};
 
@@ -51,7 +51,10 @@ pub fn run(client: &MlabClient, domain: &str, json: bool) {
                 ]
             })
             .collect();
-        return output::csv_table(&["common_name", "not_before", "not_after", "issuer", "serial"], &rows);
+        return output::csv_table(
+            &["common_name", "not_before", "not_after", "issuer", "serial"],
+            &rows,
+        );
     }
 
     if certs.is_empty() {
@@ -60,16 +63,17 @@ pub fn run(client: &MlabClient, domain: &str, json: bool) {
         // answer usually means "never scanned", not "no certificates".
         println!(
             "  {}",
-            format!("Run `mlab scan domain {domain}` first — this endpoint returns cached scan data.")
-                .dimmed()
+            format!(
+                "Run `mlab scan domain {domain}` first — this endpoint returns cached scan data."
+            )
+            .dimmed()
         );
         return;
     }
 
     println!();
     println!(
-        "  {} Found {} certificate(s) for {}",
-        "🔒",
+        "  🔒 Found {} certificate(s) for {}",
         certs.len().to_string().bold(),
         domain.cyan()
     );
@@ -96,7 +100,9 @@ pub fn render_table(certs: &[SslCert], show_sans: bool) {
 
         let expiry = match expiry_state(&cert.not_after) {
             Expiry::Expired => format!("{} (expired)", not_after).red().to_string(),
-            Expiry::Soon(days) => format!("{} ({}d left)", not_after, days).yellow().to_string(),
+            Expiry::Soon(days) => format!("{} ({}d left)", not_after, days)
+                .yellow()
+                .to_string(),
             Expiry::Valid => not_after.green().to_string(),
             Expiry::Unknown => not_after.normal().to_string(),
         };
@@ -184,7 +190,11 @@ mod tests {
         let mut y = 1970;
         let mut remaining = target;
         loop {
-            let len = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+            let len = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                366
+            } else {
+                365
+            };
             if remaining < len {
                 break;
             }
@@ -192,7 +202,20 @@ mod tests {
             y += 1;
         }
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let months = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut m = 0;
         while remaining >= months[m] {
             remaining -= months[m];
@@ -221,7 +244,10 @@ mod tests {
 
     #[test]
     fn issuer_is_shortened_to_the_common_name_then_the_organization() {
-        assert_eq!(shorten_issuer("C=US, O=DigiCert Inc, CN=DigiCert Global CA G2"), "DigiCert Global CA G2");
+        assert_eq!(
+            shorten_issuer("C=US, O=DigiCert Inc, CN=DigiCert Global CA G2"),
+            "DigiCert Global CA G2"
+        );
         assert_eq!(shorten_issuer("C=US, O=Let's Encrypt"), "Let's Encrypt");
         assert_eq!(shorten_issuer("weird"), "weird");
     }

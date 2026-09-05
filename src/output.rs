@@ -19,7 +19,11 @@ pub enum Format {
 static FORMAT: AtomicU8 = AtomicU8::new(0);
 
 pub fn init(format: Option<&str>) {
-    let value = match format.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+    let value = match format
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("json") => 1,
         Some("csv") => 2,
         _ => 0,
@@ -64,12 +68,23 @@ pub fn csv_field(value: &str) -> String {
 }
 
 pub fn csv_row(fields: &[String]) -> String {
-    fields.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",")
+    fields
+        .iter()
+        .map(|f| csv_field(f))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Print a CSV table with its header.
 pub fn csv_table(header: &[&str], rows: &[Vec<String>]) {
-    println!("{}", header.iter().map(|h| csv_field(h)).collect::<Vec<_>>().join(","));
+    println!(
+        "{}",
+        header
+            .iter()
+            .map(|h| csv_field(h))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     for row in rows {
         println!("{}", csv_row(row));
     }
