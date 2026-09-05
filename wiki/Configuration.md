@@ -25,6 +25,10 @@ mlab config set hostname https://staging.mlab.sh
 The file is not created until something needs to write it. Everything works
 from the environment alone, which is what a CI runner usually wants.
 
+`conf.yml` is the only thing the core writes to `~/.mlab`. Installing a
+[module](Modules) adds `bin/`, `modules.json` and a `catalog.json` cache
+alongside it; removing every module leaves the config untouched.
+
 ## Profiles
 
 One machine, several organisations. A profile is a named block that overrides

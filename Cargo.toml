@@ -1,6 +1,6 @@
 [package]
 name = "mlab"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "CLI client for the mlab.sh threat intelligence and CVE APIs"
 license = "Apache-2.0"
@@ -64,6 +64,9 @@ dialoguer = "0.11"
 base64 = "0.22"
 clap_complete = "4"
 clap_mangen = "0.2"
+tar = "0.4"
+flate2 = "1"
+sha2 = "0.10"
 
 [profile.release]
 strip = true

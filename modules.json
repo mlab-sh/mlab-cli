@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "modules": [
+    {
+      "name": "unifi",
+      "binary": "mlab-unifi",
+      "repo": "https://github.com/mlab-sh/mlab-unifi",
+      "description": "Audit UniFi consoles over the local and Site Manager APIs",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ]
+    }
+  ]
+}

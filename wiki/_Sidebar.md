@@ -20,11 +20,13 @@
 - [login](Login)
 - [config](Config)
 - [completions](Completions)
+- [module](Modules)
 
 **Concepts**
 - [Hosts](Hosts)
 - [Authentication](Authentication)
 - [Configuration](Configuration)
+- [Modules](Modules)
 - [Output](Output)
 - [Exit codes](Exit-Codes)
 

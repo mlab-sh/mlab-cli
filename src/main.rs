@@ -7,7 +7,9 @@ mod output;
 mod ui;
 mod util;
 
-use clap::{Parser, Subcommand};
+use std::ffi::OsString;
+
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use client::{HostClient, MlabClient};
 use config::Config;
@@ -224,6 +226,19 @@ enum Commands {
         #[arg(long)]
         raw: bool,
     },
+
+    /// Install and manage mlab modules
+    Module {
+        #[command(subcommand)]
+        action: ModuleAction,
+    },
+
+    /// Anything else: an installed module handles it, e.g. `mlab unifi ...`
+    ///
+    /// Modules are separate `mlab-<name>` binaries. This variant is what lets
+    /// them be reached as sub-commands; it never matches a name clap owns.
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
 
 #[derive(Subcommand)]
@@ -660,6 +675,63 @@ enum ResultsTarget {
     },
 }
 
+#[derive(Subcommand)]
+enum ModuleAction {
+    /// List the modules that can be installed
+    Available {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List the modules installed on this machine
+    List {
+        /// Output raw JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Install a module from its published release
+    Install {
+        /// Module name, as shown by `mlab module available`
+        name: String,
+
+        /// Install this release instead of the latest one
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+
+        /// Clone and `cargo build --release` instead of downloading a binary
+        #[arg(long)]
+        from_source: bool,
+
+        /// Reinstall even when it is already present
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Update installed modules to their latest release
+    Update {
+        /// Only this module (default: all of them)
+        name: Option<String>,
+    },
+
+    /// Remove an installed module
+    Remove {
+        /// Module name
+        name: String,
+
+        /// Also delete the clone under ~/.mlab/sources
+        #[arg(long)]
+        purge: bool,
+    },
+
+    /// Print the path of a module's binary
+    Which {
+        /// Module name
+        name: String,
+    },
+}
+
 /// `None` when the command can emit CSV; otherwise its name, for the message.
 fn csv_unsupported(command: &Commands) -> Option<&'static str> {
     match command {
@@ -683,7 +755,10 @@ fn csv_unsupported(command: &Commands) -> Option<&'static str> {
         Commands::Network { .. } => Some("network"),
         Commands::Vuln { .. } => Some("vuln query"),
         Commands::Search { .. } => Some("search"),
-        Commands::Open { .. }
+        // A module owns its own output; the core has no table to refuse.
+        Commands::External(..) => None,
+        Commands::Module { .. }
+        | Commands::Open { .. }
         | Commands::Config { .. }
         | Commands::Completions { .. }
         | Commands::Man
@@ -713,8 +788,29 @@ fn make_client(cli: &Cli) -> MlabClient {
     MlabClient::new(&hostname, &api_key)
 }
 
+/// Sub-command names clap owns. A module can never shadow one of these, so
+/// `module install` checks against this list.
+pub fn builtin_names() -> Vec<String> {
+    Cli::command()
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect()
+}
+
+/// Parse with the installed modules appended to the help text, so `mlab --help`
+/// lists what this machine can actually run. The sub-commands themselves stay
+/// static: modules are reached through `Commands::External`.
+fn parse() -> Cli {
+    let mut command = Cli::command();
+    if let Some(section) = commands::module::help_section() {
+        command = command.after_help(section);
+    }
+    let matches = command.get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let cli = parse();
     ui::init(cli.quiet);
     output::init(cli.output.as_deref());
     client::configure(cli.dry_run, cli.timeout);
@@ -968,6 +1064,22 @@ fn main() {
         Commands::Limits { scan_type, raw } => {
             let client = make_client(&cli);
             commands::limits::run(&client, scan_type.as_deref(), *raw);
+        }
+        Commands::Module { action } => match action {
+            ModuleAction::Available { json } => commands::module::available(*json),
+            ModuleAction::List { json } => commands::module::list(*json),
+            ModuleAction::Install {
+                name,
+                version,
+                from_source,
+                force,
+            } => commands::module::install(name, version.as_deref(), *from_source, *force),
+            ModuleAction::Update { name } => commands::module::update(name.as_deref()),
+            ModuleAction::Remove { name, purge } => commands::module::remove(name, *purge),
+            ModuleAction::Which { name } => commands::module::which_module(name),
+        },
+        Commands::External(args) => {
+            commands::module::dispatch(args, cli.profile.as_deref());
         }
     }
 }

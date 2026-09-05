@@ -4,6 +4,7 @@ pub mod cve;
 pub mod limits;
 pub mod login;
 pub mod lookup;
+pub mod module;
 pub mod results;
 pub mod scan;
 pub mod search;

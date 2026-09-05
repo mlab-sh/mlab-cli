@@ -34,6 +34,7 @@ same command serves an investigation and a pipeline.
 | [`open`](Search) | Jump to the matching web report. |
 | [`config`](Config) | Read and edit the config file and its profiles. |
 | [`completions`, `man`](Completions) | Shell completions and a roff man page. |
+| [`module`](Modules) | Install the optional `mlab-*` modules, e.g. `mlab unifi`. |
 
 ## Key concepts
 
@@ -49,6 +50,9 @@ same command serves an investigation and a pipeline.
   honest, and the rules that keep progress out of a pipe.
 - **[Exit codes](Exit-Codes)** — the API reports quota, maintenance and bad
   input all as HTTP 400; the CLI turns that into a code you can branch on.
+- **[Modules](Modules)** — the optional integrations live in their own
+  repositories and are installed on demand, which is why `mlab unifi` works
+  without UniFi support being linked into the core.
 - **[Releasing](Releasing)** — how a version becomes a Homebrew formula, a
   `.deb`, an `.rpm` and a set of tarballs.
 
@@ -76,6 +80,7 @@ mlab actor get apt28
 ## Scope
 
 The CLI is a client. It does not cache, it does not keep a local database, and
-apart from the config file it writes nothing to disk that you did not redirect
-there yourself. The one command that reaches a target rather than an API is
-[`network`](Network), and even that runs server-side.
+apart from the config file and the [modules](Modules) you install, it writes
+nothing to disk that you did not redirect there yourself. The one command that
+reaches a target rather than an API is [`network`](Network), and even that runs
+server-side.
