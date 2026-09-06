@@ -36,6 +36,30 @@
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu"
       ]
+    },
+    {
+      "name": "cloudflare",
+      "binary": "mlab-cloudflare",
+      "repo": "https://github.com/mlab-sh/mlab-cloudflare",
+      "description": "Audit Cloudflare accounts and DNS zones over the v4 API, read-only",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ]
+    },
+    {
+      "name": "scw",
+      "binary": "mlab-scw",
+      "repo": "https://github.com/mlab-sh/mlab-scw",
+      "description": "Audit Scaleway accounts over the API, read-only",
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ]
     }
   ]
 }

@@ -1048,7 +1048,7 @@ mod tests {
     #[test]
     fn the_shipped_catalog_parses() {
         let catalog = parse_catalog(BUILTIN_CATALOG).expect("modules.json is valid");
-        for name in ["unifi", "mikrotik", "proxmox"] {
+        for name in ["unifi", "mikrotik", "proxmox", "cloudflare", "scw"] {
             assert!(catalog.find(name).is_some(), "{name} is missing");
         }
     }
@@ -1106,6 +1106,9 @@ mod tests {
     #[test]
     fn asset_names_follow_the_release_layout() {
         let catalog = parse_catalog(BUILTIN_CATALOG).unwrap();
+        // Spelled out rather than derived from the entry: these are the names
+        // the release workflows actually publish, checked against the real
+        // releases. Deriving them would only prove the template equals itself.
         for (name, asset) in [
             ("unifi", "mlab-unifi-1.0.0-aarch64-apple-darwin.tar.gz"),
             (
@@ -1113,6 +1116,11 @@ mod tests {
                 "mlab-mikrotik-1.0.0-aarch64-apple-darwin.tar.gz",
             ),
             ("proxmox", "mlab-proxmox-1.0.0-aarch64-apple-darwin.tar.gz"),
+            (
+                "cloudflare",
+                "mlab-cloudflare-1.0.0-aarch64-apple-darwin.tar.gz",
+            ),
+            ("scw", "mlab-scw-1.0.0-aarch64-apple-darwin.tar.gz"),
         ] {
             let module = catalog.find(name).unwrap();
             assert_eq!(module.asset_name("1.0.0", "aarch64-apple-darwin"), asset);
