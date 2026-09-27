@@ -312,3 +312,28 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/SHA256SUMS
+
+  crates-io:
+    name: Publish to crates.io
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # A version on crates.io is immutable, so re-running the workflow for a
+      # version that is already up must be a no-op rather than a failure.
+      - name: Publish unless this version is already up
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A 'mlab-cli release (github.com/mlab-sh/mlab-cli)' \
+            "https://crates.io/api/v1/crates/mlab/$VERSION")
+          if [ "$status" = "200" ]; then
+            echo "mlab $VERSION is already on crates.io, skipping."
+          else
+            cargo publish --locked
+          fi
