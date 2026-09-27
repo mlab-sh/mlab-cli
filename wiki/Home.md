@@ -50,6 +50,8 @@ same command serves an investigation and a pipeline.
   honest, and the rules that keep progress out of a pipe.
 - **[Exit codes](Exit-Codes)** — the API reports quota, maintenance and bad
   input all as HTTP 400; the CLI turns that into a code you can branch on.
+- **[pre-commit](Pre-commit)** — the same dependency scan as a git hook,
+  refusing a commit whose lockfile brings in a high or critical finding.
 - **[Modules](Modules)** — the optional integrations live in their own
   repositories and are installed on demand, which is why `mlab unifi` works
   without UniFi support being linked into the core.

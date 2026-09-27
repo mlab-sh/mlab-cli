@@ -1,0 +1,35 @@
+# Hooks for https://pre-commit.com — see wiki/Pre-commit.md.
+#
+# The file pattern lists only the manifests vuln.mlab.sh parses correctly
+# today, because a hook that matches a file the server cannot read blocks the
+# commit (exit 4) or, worse, passes it on a wrong parse:
+#
+#   poetry.lock, uv.lock   read as Cargo.lock, every package tagged crates.io,
+#                          so a Python project would come back clean
+#   yarn.lock, pnpm-lock,  not parsed yet
+#   Pipfile.lock, mise.lock
+#   requirements*.txt      parsed only when pinned with ==; a file of ranges
+#                          fails with "no dependencies parsed". Opt in with a
+#                          `files:` override, see the wiki page.
+#
+# Add a pattern here only once the server handles that format.
+
+- id: mlab-sbom-scan
+  name: mlab dependency scan
+  description: Scan staged lockfiles on vuln.mlab.sh and block the commit on a high or critical finding.
+  entry: mlab sbom scan
+  language: rust
+  files: &lockfiles '(^|/)(Cargo\.lock|package-lock\.json|npm-shrinkwrap\.json|composer\.lock|Gemfile\.lock|go\.sum|bom\.json|[^/]+\.cdx\.json)$'
+  args: [--fail-on, high]
+  # One process for every matched file: --fail-on is evaluated once across
+  # all of them, and the requests go out one after another, not in parallel.
+  require_serial: true
+
+- id: mlab-sbom-scan-system
+  name: mlab dependency scan (installed binary)
+  description: Same as mlab-sbom-scan, using the mlab already on PATH (Homebrew, .deb, .rpm) instead of building it.
+  entry: mlab sbom scan
+  language: system
+  files: *lockfiles
+  args: [--fail-on, high]
+  require_serial: true

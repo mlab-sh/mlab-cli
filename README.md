@@ -72,6 +72,22 @@ mlab actor get apt28
 | [`completions`, `man`](https://github.com/mlab-sh/mlab-cli/wiki/Completions) | Shell completions and a roff man page |
 | [`module`](https://github.com/mlab-sh/mlab-cli/wiki/Modules) | Install the optional `mlab-*` modules |
 
+## pre-commit
+
+Block a commit whose lockfile brings in a high or critical vulnerability:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/mlab-sh/mlab-cli
+    rev: v1.1.1
+    hooks:
+      - id: mlab-sbom-scan
+```
+
+No key needed. Supported lockfiles, thresholds and the `--no-verify` escape
+hatch are in [pre-commit](https://github.com/mlab-sh/mlab-cli/wiki/Pre-commit).
+
 ## Modules
 
 The integrations that only matter to some people live in their own repositories

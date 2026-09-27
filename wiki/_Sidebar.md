@@ -22,6 +22,9 @@
 - [completions](Completions)
 - [module](Modules)
 
+**Integrations**
+- [pre-commit](Pre-commit)
+
 **Concepts**
 - [Hosts](Hosts)
 - [Authentication](Authentication)

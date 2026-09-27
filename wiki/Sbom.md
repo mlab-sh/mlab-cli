@@ -104,5 +104,8 @@ spreadsheet built on one works on the other.
 
 ## Related
 
+[pre-commit](Pre-commit) runs this command as a git hook on every commit that
+touches a lockfile.
+
 [`vuln query`](Vuln) asks the same database about a single package coordinate
 rather than a whole lockfile.

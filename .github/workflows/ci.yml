@@ -54,3 +54,47 @@ jobs:
       # never touches the network.
       - name: Test
         run: cargo test --all --locked
+
+  # The pre-commit hook, installed the way a user gets it: pre-commit builds
+  # this checkout with `cargo install --path .` and runs it on a lockfile.
+  # Unlike the suite above this job reaches vuln.mlab.sh, because what it
+  # proves is that the hook, the binary and the live API agree. The lockfiles
+  # are written here rather than committed, so a deliberately vulnerable
+  # fixture never shows up in this repository's Dependabot alerts.
+  pre-commit-hook:
+    name: pre-commit hook
+    runs-on: ubuntu-latest
+    env:
+      MLAB_VULN_TOKEN: ${{ secrets.MLAB_VULN_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Validate the manifest
+        run: pre-commit validate-manifest .pre-commit-hooks.yaml
+
+      - name: Blocks a vulnerable lockfile
+        run: |
+          dir=$(mktemp -d) && cd "$dir" && git init -q
+          printf '{"name":"fixture","lockfileVersion":3,"requires":true,"packages":{"":{"name":"fixture","dependencies":{"lodash":"4.17.20"}},"node_modules/lodash":{"version":"4.17.20"}}}' > package-lock.json
+          git add package-lock.json
+          if pre-commit try-repo "$GITHUB_WORKSPACE" mlab-sbom-scan --files package-lock.json; then
+            echo "::error::the hook let lodash 4.17.20 through"
+            exit 1
+          fi
+
+      - name: Passes a clean lockfile
+        run: |
+          sleep 5
+          dir=$(mktemp -d) && cd "$dir" && git init -q
+          printf '{"name":"fixture","lockfileVersion":3,"requires":true,"packages":{"":{"name":"fixture","dependencies":{"ms":"2.1.3"}},"node_modules/ms":{"version":"2.1.3"}}}' > package-lock.json
+          git add package-lock.json
+          pre-commit try-repo "$GITHUB_WORKSPACE" mlab-sbom-scan --files package-lock.json
