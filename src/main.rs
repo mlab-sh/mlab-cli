@@ -608,14 +608,14 @@ enum ActorAction {
 
 #[derive(Subcommand)]
 enum SbomAction {
-    /// Scan a lockfile (path, `-` for stdin, or --url)
+    /// Scan one or more lockfiles (paths, `-` for stdin, or --url)
     Scan {
-        /// Lockfile to scan, or `-` to read stdin
-        path: Option<String>,
+        /// Lockfiles to scan, or `-` to read stdin
+        paths: Vec<String>,
 
-        /// Scan a lockfile published at this URL instead
-        #[arg(long, conflicts_with = "path")]
-        url: Option<String>,
+        /// Scan a lockfile published at this URL (repeatable)
+        #[arg(long)]
+        url: Vec<String>,
 
         /// Force the manifest format instead of detecting it (npm, cargo, …)
         #[arg(long)]
@@ -1032,15 +1032,15 @@ fn main() {
             let client = make_vuln_client(&cli);
             match action {
                 SbomAction::Scan {
-                    path,
+                    paths,
                     url,
                     format,
                     fail_on,
                     json,
                 } => {
                     let opts = commands::vuln::ScanOptions {
-                        source: path.as_deref(),
-                        url: url.as_deref(),
+                        sources: paths,
+                        urls: url,
                         format: format.as_deref(),
                         fail_on: fail_on.as_deref(),
                         json: *json,

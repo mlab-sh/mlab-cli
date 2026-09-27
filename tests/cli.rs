@@ -1774,6 +1774,36 @@ fn fail_on_matches_the_severity_the_web_ui_would_paint() {
 }
 
 #[test]
+fn several_lockfiles_are_all_scanned_before_the_gate_fires() {
+    let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
+    let home = TempHome::new("https://unused.example");
+    let npm = home.path.join("package-lock.json");
+    let cargo = home.path.join("Cargo.lock");
+    std::fs::write(&npm, "{}").unwrap();
+    std::fs::write(&cargo, "[[package]]").unwrap();
+
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            npm.to_str().unwrap(),
+            cargo.to_str().unwrap(),
+            "--fail-on",
+            "high",
+        ],
+    );
+
+    assert_eq!(out.status.code(), Some(7), "stdout: {}", stdout(&out));
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].path.contains("filename=package-lock.json"));
+    assert!(requests[1].path.contains("filename=Cargo.lock"));
+}
+
+#[test]
 fn fail_on_stays_quiet_below_its_threshold() {
     let server = TestServer::start(|_| json(&scan_payload(MEDIUM_VECTOR)));
     let home = TempHome::new("https://unused.example");

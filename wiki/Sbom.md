@@ -6,6 +6,7 @@ what it finds.
 ```bash
 mlab sbom scan package-lock.json
 mlab sbom scan Cargo.lock --fail-on high
+mlab sbom scan Cargo.lock web/package-lock.json api/go.sum --fail-on high
 mlab sbom scan --url https://raw.githubusercontent.com/o/r/main/go.sum
 cat requirements.txt | mlab sbom scan - --format pip
 ```
@@ -27,6 +28,15 @@ forces it when detection needs help, which is mostly when the content arrived on
 stdin with no filename to go on.
 
 Giving neither a path nor `--url` is an error, not a silent scan of nothing.
+
+## Several lockfiles at once
+
+Paths can be repeated, and so can `--url`; both can be mixed. Each manifest is
+scanned and rendered in turn, and `--fail-on` is evaluated **once, at the end**,
+across all of them — so one failing lockfile never hides what the others would
+have found. With `--json`, a single manifest keeps its usual object; several
+come out as a JSON array, one object per manifest. `-o csv` emits a single
+table covering every file.
 
 ## `--fail-on`
 

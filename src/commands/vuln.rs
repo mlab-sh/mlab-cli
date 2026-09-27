@@ -35,8 +35,8 @@ struct Finding {
 }
 
 pub struct ScanOptions<'a> {
-    pub source: Option<&'a str>,
-    pub url: Option<&'a str>,
+    pub sources: &'a [String],
+    pub urls: &'a [String],
     pub format: Option<&'a str>,
     pub fail_on: Option<&'a str>,
     pub json: bool,
@@ -56,55 +56,54 @@ pub fn scan(client: &HostClient, opts: &ScanOptions) {
         None => None,
     };
 
-    let (body, label) = match (opts.url, opts.source) {
-        (Some(url), _) => {
-            // URL mode: the server fetches and parses the lockfile itself.
-            let mut path = format!("/api/v2/scan?url={}", urlencode(url));
-            if let Some(f) = opts.format {
-                path.push_str(&format!("&format={}", urlencode(f)));
-            }
-            let raw = ui::with_spinner(&format!("Scanning {url}"), || vuln_body(client.get(&path)));
-            (raw, url.to_string())
-        }
-        (None, Some(source)) => {
-            let content = read_input(source);
-            let name = Path::new(source)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("manifest");
-            // The raw lockfile goes up as the body: the scanner detects npm,
-            // cargo, pip and the rest server-side, so the CLI never has to learn
-            // a lockfile format.
-            let mut path = format!("/api/v2/scan?filename={}", urlencode(name));
-            if let Some(f) = opts.format {
-                path.push_str(&format!("&format={}", urlencode(f)));
-            }
-            let raw = ui::with_spinner(&format!("Scanning {name}"), || {
-                vuln_body(client.post_raw(&path, content))
-            });
-            (raw, name.to_string())
-        }
-        (None, None) => ApiError {
+    if opts.sources.is_empty() && opts.urls.is_empty() {
+        ApiError {
             status: None,
             message: "provide a lockfile path, `-` for stdin, or --url.".to_string(),
             kind: ErrorKind::Input,
         }
-        .report(),
-    };
-
-    if opts.json {
-        print_json(&body);
-        // Even in JSON mode the gate still has to fire, or a CI job that asked
-        // for machine-readable output would silently stop failing.
-        let v: Value = serde_json::from_str(&body).unwrap_or_default();
-        gate(&collect(&v), &v, threshold, opts.json);
-        return;
+        .report();
     }
 
-    let v: Value = crate::commands::parse_or_exit(&body, "scan");
-    let findings = collect(&v);
+    // Every manifest is scanned before the gate runs, so one failing file does
+    // not hide what the others would have found.
+    let mut scans: Vec<(String, Value)> = Vec::new();
+    let mut findings: Vec<Finding> = Vec::new();
+    let targets = opts
+        .urls
+        .iter()
+        .map(|u| (true, u))
+        .chain(opts.sources.iter().map(|s| (false, s)));
+    for (is_url, target) in targets {
+        let (body, label) = if is_url {
+            fetch_url(client, target, opts.format)
+        } else {
+            fetch_file(client, target, opts.format)
+        };
+        let v: Value = if opts.json {
+            serde_json::from_str(&body).unwrap_or_default()
+        } else {
+            crate::commands::parse_or_exit(&body, "scan")
+        };
+        let found = collect(&v);
+        if !opts.json && !output::wants_csv() {
+            render(&v, &found, &label);
+        }
+        findings.extend(found);
+        scans.push((label, v));
+    }
 
-    if output::wants_csv() {
+    if opts.json {
+        // One manifest keeps the historical single-object shape; several become
+        // an array. Even in JSON mode the gate still has to fire, or a CI job
+        // that asked for machine-readable output would silently stop failing.
+        if let [(_, v)] = scans.as_slice() {
+            println!("{}", serde_json::to_string_pretty(v).unwrap());
+        } else {
+            let all: Vec<&Value> = scans.iter().map(|(_, v)| v).collect();
+            println!("{}", serde_json::to_string_pretty(&all).unwrap());
+        }
+    } else if output::wants_csv() {
         // Same columns, in the same order, as the web scan page's CSV export.
         let rows: Vec<Vec<String>> = findings
             .iter()
@@ -136,11 +135,40 @@ pub fn scan(client: &HostClient, opts: &ScanOptions) {
             ],
             &rows,
         );
-    } else {
-        render(&v, &findings, &label);
     }
 
-    gate(&findings, &v, threshold, opts.json);
+    findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
+    gate(&findings, &scans, threshold, opts.json);
+}
+
+/// URL mode: the server fetches and parses the lockfile itself.
+fn fetch_url(client: &HostClient, url: &str, format: Option<&str>) -> (String, String) {
+    let mut path = format!("/api/v2/scan?url={}", urlencode(url));
+    if let Some(f) = format {
+        path.push_str(&format!("&format={}", urlencode(f)));
+    }
+    let raw = ui::with_spinner(&format!("Scanning {url}"), || vuln_body(client.get(&path)));
+    (raw, url.to_string())
+}
+
+fn fetch_file(client: &HostClient, source: &str, format: Option<&str>) -> (String, String) {
+    let content = read_input(source);
+    let name = Path::new(source)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("manifest");
+    // The raw lockfile goes up as the body: the scanner detects npm, cargo, pip
+    // and the rest server-side, so the CLI never has to learn a lockfile format.
+    let mut path = format!("/api/v2/scan?filename={}", urlencode(name));
+    if let Some(f) = format {
+        path.push_str(&format!("&format={}", urlencode(f)));
+    }
+    let raw = ui::with_spinner(&format!("Scanning {name}"), || {
+        vuln_body(client.post_raw(&path, content))
+    });
+    // The full path, not the basename: two `package-lock.json` in a monorepo
+    // must stay distinguishable in the output.
+    (raw, source.to_string())
 }
 
 pub fn query(client: &HostClient, coordinate: &str, version: Option<&str>, json: bool) {
@@ -521,10 +549,21 @@ fn incomplete(v: &Value) -> Vec<String> {
 
 /// Apply `--fail-on`. An incomplete scan never passes the gate: "we did not
 /// look" must not be reported as "nothing to find".
-fn gate(findings: &[Finding], payload: &Value, threshold: Option<Severity>, json: bool) {
+fn gate(findings: &[Finding], scans: &[(String, Value)], threshold: Option<Severity>, json: bool) {
     let Some(threshold) = threshold else { return };
 
-    let reasons = incomplete(payload);
+    let reasons: Vec<String> = scans
+        .iter()
+        .flat_map(|(label, v)| {
+            incomplete(v).into_iter().map(move |r| {
+                if scans.len() > 1 {
+                    format!("{label}: {r}")
+                } else {
+                    r
+                }
+            })
+        })
+        .collect();
     if !reasons.is_empty() {
         if output::wants_json(json) {
             for reason in &reasons {
