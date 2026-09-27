@@ -1,6 +1,6 @@
 [package]
 name = "mlab"
-version = "1.0.4"
+version = "1.1.0"
 edition = "2021"
 description = "CLI client for the mlab.sh threat intelligence and CVE APIs"
 license = "Apache-2.0"
@@ -9,6 +9,7 @@ repository = "https://github.com/mlab-sh/mlab-cli"
 readme = "README.md"
 keywords = ["security", "threat-intelligence", "cve", "cli"]
 categories = ["command-line-utilities"]
+include = ["src/**/*", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "modules.json"]
 
 # Debian packaging. The .deb ships on the GitHub release, nowhere else. The
 # release profile already strips the binary, so CI passes --no-strip: letting
