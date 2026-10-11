@@ -295,18 +295,7 @@ fn finding_from(vuln: &Value, package: &str, version: &str, ecosystem: &str) -> 
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    let cve = if advisory.to_ascii_uppercase().starts_with("CVE-") {
-        advisory.clone()
-    } else {
-        vuln.get("aliases")
-            .and_then(|a| a.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|a| a.as_str())
-            .find(|a| a.to_ascii_uppercase().starts_with("CVE-"))
-            .unwrap_or_default()
-            .to_string()
-    };
+    let cve = cve_of(vuln, &advisory);
     let summary = vuln
         .get("summary")
         .or_else(|| vuln.get("details"))
@@ -330,6 +319,41 @@ fn finding_from(vuln: &Value, package: &str, version: &str, ecosystem: &str) -> 
         fixed: fixed_version(vuln, package),
         summary,
     }
+}
+
+/// The CVE an advisory is about, the way the server picks it: an alias, then
+/// `upstream` (Debian and Ubuntu records list their CVEs there, not in
+/// aliases), then one embedded in the id (`DEBIAN-CVE-2024-1234`). Empty when
+/// there is none.
+fn cve_of(vuln: &Value, advisory: &str) -> String {
+    let list = |key: &str| {
+        vuln.get(key)
+            .and_then(|a| a.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a.as_str())
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+    let mut candidates = list("aliases");
+    candidates.extend(list("upstream"));
+    candidates.push(advisory.to_string());
+    candidates
+        .iter()
+        .find_map(|s| embedded_cve(s))
+        .unwrap_or_default()
+}
+
+/// `CVE-YYYY-NNNN…` anywhere in `s`, uppercased.
+fn embedded_cve(s: &str) -> Option<String> {
+    let upper = s.to_ascii_uppercase();
+    let at = upper.find("CVE-")?;
+    let tail = &upper[at + 4..];
+    let year = tail.get(..4)?;
+    let rest = tail.get(4..)?.strip_prefix('-')?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (year.chars().all(|c| c.is_ascii_digit()) && !digits.is_empty())
+        .then(|| format!("CVE-{year}-{digits}"))
 }
 
 /// The version that resolves the advisory, when the range says so.
@@ -375,30 +399,32 @@ fn fixed_version(vuln: &Value, package: &str) -> String {
 
 fn render(v: &Value, findings: &[Finding], label: &str) {
     let scanned = v.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
+    let total = v
+        .pointer("/truncation/total_packages")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(scanned);
     let cached = v.get("cached").and_then(|c| c.as_bool()).unwrap_or(false);
 
     println!();
     println!("  📦 Dependency Scan  {}", label.cyan().bold());
     println!("{}", format!("  {}", "─".repeat(88)).dimmed());
+    let packages = if total > scanned {
+        format!("{scanned} of {total}")
+    } else {
+        scanned.to_string()
+    };
     println!(
         "  {:<14} {}{}",
         "Packages:".dimmed(),
-        scanned.to_string().bold(),
+        packages.bold(),
         if cached {
             "  (cached)".dimmed().to_string()
         } else {
             String::new()
         },
     );
-
-    if v.get("truncated")
-        .and_then(|t| t.as_bool())
-        .unwrap_or(false)
-    {
-        println!(
-            "  {}",
-            "Manifest truncated — not every package was scanned.".yellow()
-        );
+    if let Some(limits) = limits_line(v) {
+        println!("  {:<14} {}", "Limits:".dimmed(), limits.dimmed());
     }
 
     let counts = tally(findings);
@@ -421,9 +447,32 @@ fn render(v: &Value, findings: &[Finding], label: &str) {
         print_table(findings);
     }
 
-    for warning in incomplete(v) {
+    for warning in incomplete(v).into_iter().chain(unscanned_note(v)) {
         ui::warning(&warning);
     }
+    if let Some(up) = v
+        .pointer("/truncation/upgrade/message")
+        .and_then(|m| m.as_str())
+    {
+        println!("  {}", up.cyan());
+        println!();
+    }
+}
+
+/// The caller's tier and its limits, as the server states them.
+fn limits_line(v: &Value) -> Option<String> {
+    let tier = v.get("tier").and_then(|t| t.as_str())?;
+    let max = v.pointer("/limits/max_packages").and_then(|m| m.as_u64())?;
+    let cooldown = v
+        .pointer("/limits/cooldown_secs")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(0);
+    let gap = if cooldown > 0 {
+        format!("one scan every {cooldown} s")
+    } else {
+        "no cooldown".to_string()
+    };
+    Some(format!("{tier}: up to {max} packages per scan, {gap}"))
 }
 
 /// Pad to `width` counting characters, not bytes — `{:<n}` measures the ANSI
@@ -537,7 +586,11 @@ fn incomplete(v: &Value) -> Vec<String> {
         ));
     }
 
-    if v.get("truncated")
+    // The server says how many were cut and why; older answers carry the flag only.
+    if let Some(message) = v.pointer("/truncation/message").and_then(|m| m.as_str()) {
+        reasons.push(message.to_string());
+    } else if v
+        .get("truncated")
         .and_then(|t| t.as_bool())
         .unwrap_or(false)
     {
@@ -545,6 +598,41 @@ fn incomplete(v: &Value) -> Vec<String> {
     }
 
     reasons
+}
+
+/// Entries the server parsed but could not turn into a package coordinate (a
+/// git or path dependency, an unpinned version, the Flutter SDK in every
+/// pubspec.lock, an SBOM component without purl or cpe). Reported, but not a
+/// reason to fail the gate: some are unscannable by nature, and a gate that
+/// always fails gets switched off.
+fn unscanned_note(v: &Value) -> Option<String> {
+    let unscanned: Vec<&str> = v
+        .get("unscanned")
+        .and_then(|u| u.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.as_str())
+        .collect();
+    if unscanned.is_empty() {
+        return None;
+    }
+    let shown = unscanned
+        .iter()
+        .take(10)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if unscanned.len() > 10 {
+        format!(", and {} more", unscanned.len() - 10)
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "{} entr{} could not be scanned and {} not counted as clean: {shown}{more}.",
+        unscanned.len(),
+        if unscanned.len() == 1 { "y" } else { "ies" },
+        if unscanned.len() == 1 { "is" } else { "are" },
+    ))
 }
 
 /// Apply `--fail-on`. An incomplete scan never passes the gate: "we did not
@@ -720,6 +808,53 @@ mod tests {
         let mut v = payload_with(json!([]), json!([]));
         v["truncated"] = json!(true);
         assert_eq!(incomplete(&v).len(), 1);
+    }
+
+    #[test]
+    fn a_cut_manifest_is_incomplete_in_the_server_words_unscanned_entries_only_warn() {
+        let mut v = payload_with(json!([]), json!([]));
+        v["truncated"] = json!(true);
+        v["truncation"] = json!({"total_packages": 600, "scanned": 512, "not_scanned": 88,
+            "message": "Only the first 512 of 600 packages were scanned."});
+        v["unscanned"] = json!(["pub flutter (sdk)"]);
+        assert_eq!(
+            incomplete(&v),
+            vec!["Only the first 512 of 600 packages were scanned.".to_string()]
+        );
+        let note = unscanned_note(&v).unwrap();
+        assert!(
+            note.contains(
+                "1 entry could not be scanned and is not counted as clean: pub flutter (sdk)"
+            ),
+            "{note}"
+        );
+        assert_eq!(unscanned_note(&payload_with(json!([]), json!([]))), None);
+    }
+
+    #[test]
+    fn the_cve_is_read_from_aliases_upstream_or_the_id() {
+        assert_eq!(
+            cve_of(&json!({"aliases":["RUSTSEC-1","CVE-2020-26235"]}), "GHSA-x"),
+            "CVE-2020-26235"
+        );
+        assert_eq!(
+            cve_of(&json!({"upstream":["CVE-2023-0001"]}), "DSA-5000-1"),
+            "CVE-2023-0001"
+        );
+        assert_eq!(cve_of(&json!({}), "DEBIAN-CVE-2023-5363"), "CVE-2023-5363");
+        assert_eq!(cve_of(&json!({"aliases":["PYSEC-1"]}), "GHSA-only"), "");
+    }
+
+    #[test]
+    fn the_tier_and_its_limits_are_stated() {
+        let mut v = payload_with(json!([]), json!([]));
+        assert_eq!(limits_line(&v), None);
+        v["tier"] = json!("anonymous");
+        v["limits"] = json!({"max_packages": 512, "cooldown_secs": 10, "max_body_bytes": 4194304});
+        assert_eq!(
+            limits_line(&v).as_deref(),
+            Some("anonymous: up to 512 packages per scan, one scan every 10 s")
+        );
     }
 
     #[test]

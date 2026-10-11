@@ -163,6 +163,15 @@ fn retry_decision(result: Result<Response, reqwest::Error>, attempt: u32) -> Att
     }
 }
 
+/// How long to wait before replaying a refused (429) upload, when the server
+/// names a short enough delay and attempts remain.
+fn cooldown_wait(resp: &Response, attempt: u32) -> Option<Duration> {
+    if resp.status() != StatusCode::TOO_MANY_REQUESTS || attempt >= MAX_ATTEMPTS {
+        return None;
+    }
+    retry_after(resp).filter(|d| d.as_secs() <= MAX_RETRY_AFTER)
+}
+
 fn is_retryable(e: &reqwest::Error) -> bool {
     e.is_timeout() || e.is_connect() || e.is_request()
 }
@@ -240,14 +249,30 @@ impl HostClient {
 
     /// Raw lockfile upload: the scanner accepts the file as the body and detects
     /// the format itself, so nothing has to be parsed client-side.
+    ///
+    /// Only a 429 is replayed: it is a refusal (the server spaces scans by a
+    /// cooldown of a few seconds), so nothing was spent, and scanning several
+    /// lockfiles in a row hits it by design. Anything else could have been
+    /// scanned and metered, so it is returned as is.
     pub fn post_raw(&self, path: &str, body: Vec<u8>) -> Result<Response, ApiError> {
         let url = format!("{}{}", self.base_url, path);
         dry_run_guard("POST", &url);
-        self.authorize(self.client.post(url))
-            .header("Content-Type", "application/octet-stream")
-            .body(body)
-            .send()
-            .map_err(ApiError::transport)
+        let mut attempt = 1;
+        loop {
+            let resp = self
+                .authorize(self.client.post(&url))
+                .header("Content-Type", "application/octet-stream")
+                .body(body.clone())
+                .send()
+                .map_err(ApiError::transport)?;
+            match cooldown_wait(&resp, attempt) {
+                Some(delay) => {
+                    thread::sleep(delay);
+                    attempt += 1;
+                }
+                None => return Ok(resp),
+            }
+        }
     }
 }
 

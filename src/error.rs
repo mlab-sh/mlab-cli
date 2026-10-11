@@ -83,7 +83,20 @@ impl ApiError {
     }
 
     pub fn from_response(status: u16, body: &str) -> Self {
-        Self::new(Some(status), extract_message(status, body))
+        let message = extract_message(status, body);
+        // Classify on the machine code too: when the sentence is shown instead
+        // ("limit_reached" vs "You've hit the 10 project limit"), the code is
+        // what says what kind of failure it is.
+        let code = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from))
+            .unwrap_or_default();
+        let kind = classify(Some(status), &format!("{code} {message}"));
+        Self {
+            status: Some(status),
+            message,
+            kind,
+        }
     }
 
     pub fn report(&self) -> ! {
@@ -111,12 +124,25 @@ impl ApiError {
 /// status line when the body is not the documented `{"error": ...}` shape.
 pub fn extract_message(status: u16, body: &str) -> String {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-        for key in ["error", "message"] {
-            if let Some(m) = v.get(key).and_then(|m| m.as_str()) {
-                if !m.is_empty() {
-                    return m.to_string();
-                }
-            }
+        let text = |key: &str| {
+            v.get(key)
+                .and_then(|m| m.as_str())
+                .filter(|m| !m.is_empty())
+        };
+        // vuln.mlab.sh puts a machine code in `error` ("cooldown",
+        // "payload_too_large") and the sentence in `message`; the main API puts
+        // the sentence in `error`. A code has no space, which tells them apart.
+        let found = match (text("error"), text("message")) {
+            (Some(code), Some(sentence)) if !code.contains(' ') => Some(sentence),
+            (Some(e), _) => Some(e),
+            (None, m) => m,
+        };
+        if let Some(m) = found {
+            // A limit that was hit comes with what the next tier unlocks.
+            return match v.pointer("/upgrade/message").and_then(|u| u.as_str()) {
+                Some(up) => format!("{m} {up}"),
+                None => m.to_string(),
+            };
         }
     }
     let trimmed = body.trim();
@@ -231,6 +257,26 @@ mod tests {
     #[test]
     fn a_body_that_is_not_the_documented_shape_still_yields_something_readable() {
         assert_eq!(extract_message(500, ""), "HTTP 500");
+        // vuln.mlab.sh: a code in `error`, the sentence in `message`, and the way up.
+        assert_eq!(
+            extract_message(
+                429,
+                r#"{"error":"cooldown","message":"Retry in 7 seconds.","upgrade":{"message":"Create a free account."}}"#
+            ),
+            "Retry in 7 seconds. Create a free account."
+        );
+        assert_eq!(
+            extract_message(400, r#"{"error":"bad thing happened","message":"x"}"#),
+            "bad thing happened"
+        );
+        assert_eq!(
+            ApiError::from_response(
+                400,
+                r#"{"error":"limit_reached","message":"You've hit the 10 project limit."}"#
+            )
+            .kind,
+            ErrorKind::Quota
+        );
         assert_eq!(extract_message(502, "upstream is down"), "upstream is down");
         assert_eq!(extract_message(400, r#"{"detail":"nope"}"#), "HTTP 400");
         assert_eq!(

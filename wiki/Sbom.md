@@ -12,7 +12,29 @@ cat requirements.txt | mlab sbom scan - --format pip
 ```
 
 Answers on `vuln.mlab.sh`, which is public: no platform key needed. A
-[vuln token](Authentication) is optional and buys quota, not access.
+[vuln token](Authentication) is optional and buys larger scans, not access.
+
+Lockfiles and SBOMs the server reads: `package-lock.json`, `npm-shrinkwrap.json`,
+`yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `requirements.txt` (`==` pins),
+`poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile.lock`, `composer.lock`,
+`Gemfile.lock`, `go.sum`, `pom.xml`, `gradle.lockfile`, `packages.lock.json`,
+`pubspec.lock`, `mix.lock`, `mise.lock`, CycloneDX (JSON or XML) and SPDX (JSON
+or tag-value). An SBOM component without a purl is matched by its CPE.
+
+## Limits
+
+| | Packages per scan | Request size | Cooldown between scans |
+| --- | --- | --- | --- |
+| Anonymous (per IP) | 512 | 4 MiB | 10 s |
+| Free account, with a token | 1024 | 8 MiB | 5 s |
+| Paid plan, with a token | 4096 | 32 MiB | none |
+
+The tier and its limits are printed with each scan. Scanning several lockfiles
+in a row runs into the cooldown by design: the server refuses with a 429 and
+says how long to wait, and the CLI waits and sends the same file again (a
+refusal spent nothing). A wait longer than 30 s is reported instead, with the
+server's explanation and what the next tier unlocks; so is a file over the size
+limit.
 
 ## Three ways in
 
@@ -60,14 +82,16 @@ worked and found something bad enough.
 
 ## An incomplete scan never passes the gate
 
-The API distinguishes three things the CLI keeps distinct:
+The API distinguishes things the CLI keeps distinct:
 
 1. this package has no known vulnerabilities;
 2. this package **could not be scanned**;
-3. an upstream advisory source is down.
+3. an upstream advisory source is down;
+4. the manifest had more packages than your tier scans, and the rest were cut.
 
-Only the first is a clean result. When either of the others happens,
-`--fail-on` exits non-zero with the reason rather than reporting a clean build:
+Only the first is a clean result. When any of the others happens, `--fail-on`
+exits non-zero with the reason (for a cut manifest, the server's own sentence)
+rather than reporting a clean build:
 
 ```
 scan incomplete, so --fail-on high cannot be evaluated:
@@ -77,6 +101,12 @@ scan incomplete, so --fail-on high cannot be evaluated:
 A scan that did not look is not a scan that found nothing, and a build that
 goes green because the scanner was broken is the failure mode this rule exists
 to prevent.
+
+Entries the server could not turn into a package at all (a git or path
+dependency, an unpinned requirement, the Flutter SDK listed in every
+`pubspec.lock`, an SBOM component with neither purl nor CPE) are printed as a
+warning and are not counted as clean, but they do not fail the gate: some can
+never be scanned, and a gate that always fails ends up switched off.
 
 ## `--json`
 

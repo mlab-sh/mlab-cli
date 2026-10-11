@@ -9,7 +9,7 @@ cannot disagree.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/mlab-sh/mlab-cli
-    rev: v1.1.1
+    rev: v1.2.0
     hooks:
       - id: mlab-sbom-scan
 ```
@@ -41,12 +41,19 @@ Only when a staged file matches one of these names, in any directory:
 
 | Ecosystem | Files |
 | --- | --- |
-| npm | `package-lock.json`, `npm-shrinkwrap.json` |
+| npm | `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml` |
 | crates.io | `Cargo.lock` |
+| PyPI | `poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile.lock` |
 | Packagist | `composer.lock` |
 | RubyGems | `Gemfile.lock` |
 | Go | `go.sum` |
-| CycloneDX | `bom.json`, `*.cdx.json` |
+| Maven | `gradle.lockfile` |
+| NuGet | `packages.lock.json` |
+| Pub | `pubspec.lock` |
+| Hex | `mix.lock` |
+| mise | `mise.lock` |
+| CycloneDX | `bom.json`, `bom.xml`, `*.cdx.json`, `*.cdx.xml` |
+| SPDX | `*.spdx`, `*.spdx.json` |
 
 A commit that touches none of them skips the hook entirely: no process, no
 request. When several match, they go to one `mlab sbom scan` invocation and
@@ -55,17 +62,15 @@ what the others found.
 
 ### What is left out, and why
 
-The pattern names only what the server parses correctly. Matching a file it
-cannot read would block the commit on exit `4`, or pass it on a wrong parse:
+The pattern names the lockfiles the server reads in full. Two manifests often
+carry no exact version, and matching one the server cannot read would block the
+commit on exit `4`:
 
-- `poetry.lock` and `uv.lock` are currently read as `Cargo.lock`, so every
-  Python package is looked up on crates.io and comes back clean. Left out until
-  that is fixed server-side.
-- `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock` and `mise.lock` are not parsed
-  yet.
-- `requirements*.txt` is parsed only when every line is pinned with `==`. A file
-  of ranges fails with "no dependencies parsed". If yours are fully pinned, opt
-  in:
+- `pom.xml`: a version taken from a property or a parent POM is not resolved
+  (use Gradle locking, or a CycloneDX SBOM from your build, instead).
+- `requirements*.txt` is parsed only when lines are pinned with `==`; ranges
+  are reported as not scanned, and a file of ranges alone fails with "no
+  dependencies parsed". If yours are fully pinned, opt in:
 
 ```yaml
       - id: mlab-sbom-scan

@@ -1,25 +1,24 @@
-# Hooks for https://pre-commit.com — see wiki/Pre-commit.md.
+# Hooks for https://pre-commit.com, see wiki/Pre-commit.md.
 #
-# The file pattern lists only the manifests vuln.mlab.sh parses correctly
-# today, because a hook that matches a file the server cannot read blocks the
-# commit (exit 4) or, worse, passes it on a wrong parse:
+# The file pattern lists the lockfiles vuln.mlab.sh parses in full: pinned
+# versions only, so a hook never blocks a commit on a file the server cannot
+# read (exit 4). Two manifests stay opt-in, with a `files:` override (see the
+# wiki page), because they often carry no exact version:
 #
-#   poetry.lock, uv.lock   read as Cargo.lock, every package tagged crates.io,
-#                          so a Python project would come back clean
-#   yarn.lock, pnpm-lock,  not parsed yet
-#   Pipfile.lock, mise.lock
-#   requirements*.txt      parsed only when pinned with ==; a file of ranges
-#                          fails with "no dependencies parsed". Opt in with a
-#                          `files:` override, see the wiki page.
+#   requirements*.txt   only `==` pins are scanned; ranges are reported as not
+#                       scanned, and a file of ranges alone fails with
+#                       "no dependencies parsed"
+#   pom.xml             a version from a property or a parent is not resolved
 #
-# Add a pattern here only once the server handles that format.
+# Entries the server cannot scan at all (the Flutter SDK in a pubspec.lock, a
+# git dependency, a mise core tool) are reported but never fail the hook.
 
 - id: mlab-sbom-scan
   name: mlab dependency scan
   description: Scan staged lockfiles on vuln.mlab.sh and block the commit on a high or critical finding.
   entry: mlab sbom scan
   language: rust
-  files: &lockfiles '(^|/)(Cargo\.lock|package-lock\.json|npm-shrinkwrap\.json|composer\.lock|Gemfile\.lock|go\.sum|bom\.json|[^/]+\.cdx\.json)$'
+  files: &lockfiles '(^|/)(Cargo\.lock|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|Gemfile\.lock|go\.sum|poetry\.lock|uv\.lock|pdm\.lock|Pipfile\.lock|gradle\.lockfile|packages\.lock\.json|pubspec\.lock|mix\.lock|mise\.lock|bom\.(json|xml)|[^/]+\.cdx\.(json|xml)|[^/]+\.spdx(\.json)?)$'
   args: [--fail-on, high]
   # One process for every matched file: --fail-on is evaluated once across
   # all of them, and the requests go out one after another, not in parallel.

@@ -1716,6 +1716,122 @@ fn a_lockfile_is_posted_raw_so_the_server_detects_the_format() {
 }
 
 #[test]
+fn a_scan_refused_by_the_cooldown_is_waited_out_and_replayed() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    // Several lockfiles in a row hit the server's scan cooldown by design; a
+    // 429 is a refusal, nothing was spent, so the upload is replayed.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let server = TestServer::start(move |_| {
+        if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+            status_json(429, r#"{"error":"cooldown","message":"Anonymous scans are limited to one every 10 seconds. Retry in 1 second.","retry_after_secs":1}"#)
+                .header("Retry-After", "1")
+        } else {
+            json(&scan_payload(MEDIUM_VECTOR))
+        }
+    });
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("package-lock.json");
+    std::fs::write(&lockfile, r#"{"lockfileVersion":3}"#).unwrap();
+
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+        ],
+    );
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        server.requests()[1].body,
+        r#"{"lockfileVersion":3}"#,
+        "the replay carries the same body"
+    );
+}
+
+#[test]
+fn a_long_cooldown_shows_the_server_sentence_and_the_next_tier() {
+    let server = TestServer::start(|_| {
+        status_json(429, r#"{"error":"cooldown","message":"Anonymous scans are limited to one every 10 seconds. Retry in 600 seconds.",
+            "upgrade":{"tier":"free","message":"Create a free account to scan up to 1024 packages per scan."}}"#)
+            .header("Retry-After", "600")
+    });
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("Cargo.lock");
+    std::fs::write(
+        &lockfile,
+        "[[package]]\nname = \"time\"\nversion = \"0.1.43\"\n",
+    )
+    .unwrap();
+
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(out.status.code(), Some(EXIT_QUOTA));
+    let err = stderr(&out);
+    assert!(err.contains("Retry in 600 seconds."), "stderr: {err}");
+    assert!(err.contains("Create a free account"), "stderr: {err}");
+    assert!(
+        !err.contains("error: cooldown"),
+        "the code must not replace the sentence: {err}"
+    );
+}
+
+#[test]
+fn a_truncated_scan_cannot_pass_the_gate_and_unscanned_entries_are_reported() {
+    let payload = scan_payload(MEDIUM_VECTOR).replacen(
+        r#""truncated":false"#,
+        r#""truncated":true,"truncation":{"total_packages":600,"scanned":2,"not_scanned":598,"message":"Only the first 2 of 600 packages were scanned."},"unscanned":["pub flutter (sdk)"]"#,
+        1,
+    );
+    let server = TestServer::start(move |_| json(&payload));
+    let home = TempHome::new("https://unused.example");
+    let lockfile = home.path.join("package-lock.json");
+    std::fs::write(&lockfile, "{}").unwrap();
+
+    let out = mlab(
+        &home,
+        &[
+            "--cve-hostname",
+            &server.url,
+            "sbom",
+            "scan",
+            lockfile.to_str().unwrap(),
+            "--fail-on",
+            "critical",
+        ],
+    );
+
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("Only the first 2 of 600 packages were scanned."),
+        "stderr: {err}"
+    );
+    assert!(err.contains("pub flutter (sdk)"), "stderr: {err}");
+    assert!(
+        stdout(&out).contains("2 of 600"),
+        "stdout: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn a_url_scan_lets_the_server_fetch_the_manifest() {
     let server = TestServer::start(|_| json(&scan_payload(CRITICAL_VECTOR)));
     let home = TempHome::new("https://unused.example");
