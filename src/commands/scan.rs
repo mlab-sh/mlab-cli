@@ -81,7 +81,7 @@ fn abort_polling(error: ApiError, domain: &str) -> ! {
     error.report()
 }
 
-pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
+pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, legacy: bool, json: bool) {
     // 1. Launch the scan
     let payload = serde_json::json!({ "domain": domain });
     ui::with_spinner(&format!("Launching scan for {domain}"), || {
@@ -154,9 +154,9 @@ pub fn domain(client: &MlabClient, domain: &str, no_follow: bool, json: bool) {
 
     spinner.succeed(format!("Scan of {domain} completed"));
 
-    // 3. Fetch and display results
-    ui::with_spinner("Fetching results", || {});
-    crate::commands::results::domain(client, domain, json);
+    // 3. Fetch and display the report. The status route answers "success" for
+    // failed scans too; the report's own status is what tells them apart.
+    crate::commands::results::domain(client, domain, legacy, json);
 }
 
 fn status_label(status: &str) -> &str {

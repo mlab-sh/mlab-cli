@@ -18,10 +18,42 @@ command, matching how `scan … --json` reads.
 ```bash
 mlab results domain example.com
 mlab results domain example.com --json > report.json
+mlab results domain example.com --legacy
 ```
 
-The full report from `GET /api/v1/scan/domain/results`: DNS, hosting, exposed
-services, certificates, and whatever else the scan collected.
+The v2 report from `GET /api/v1/scan/domain/report` (`schema:
+"domain-report/2"`): the whole scan, the same one the web page shows. The
+terminal render reads top to bottom:
+
+1. **Score** out of 100 and its grade (not graded while the scan is running).
+2. **Findings**, worst first, with their section — the first 25, `--json` for
+   all of them.
+3. **Registration** (registrar, age, expiry), **DNS** (NS, MX, DNSSEC, CAA,
+   SaaS seen in TXT), **Mail** (grade, SPF, DMARC, DKIM, BIMI, TLS-RPT),
+   **Web** (HTTP, TLS, missing headers, CVEs on the detected software),
+   **Certificates** (CT history and the latest ones), **Attack surface**
+   (subdomains, suspicious names, hosts visited, technologies, takeover
+   candidates, registered lookalikes).
+
+A section the scan predates is simply left out. `--json` prints the v2 report
+exactly as the API returned it.
+
+The report's own `status` decides how the command ends:
+
+| Status | Outcome |
+| --- | --- |
+| `completed` | rendered, exit `0` |
+| `partial` | rendered with a warning: some checks did not finish, exit `0` |
+| `in_progress` | rendered with a warning, not graded, exit `0` |
+| `failed` | rendered (or printed with `--json`), then an error, exit `1` |
+
+### `--legacy`
+
+The v1 payload from `GET /api/v1/scan/domain/results`: subdomains, DNS resolve
+and TXT, CT certificates and the two well-known files. The server keeps it
+**frozen** for existing integrations and no longer extends it, so use it only to
+keep a script that parses the v1 shape working. It is the output `mlab` 1.2 and
+earlier printed by default.
 
 If no scan exists for that domain the command exits `6` — nothing found — which
 is a different thing from a scan that ran and found nothing. Launch one with

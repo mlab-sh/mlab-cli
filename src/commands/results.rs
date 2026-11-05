@@ -86,7 +86,20 @@ struct FilesData {
     robots_txt: String,
 }
 
-pub fn domain(client: &MlabClient, domain: &str, json: bool) {
+/// The v2 report by default; `legacy` reads the v1 payload, which the server
+/// keeps frozen for existing integrations and no longer extends.
+pub fn domain(client: &MlabClient, domain: &str, legacy: bool, json: bool) {
+    if legacy {
+        domain_v1(client, domain, json)
+    } else {
+        crate::commands::domain_report::run(client, domain, json)
+    }
+}
+
+fn domain_v1(client: &MlabClient, domain: &str, json: bool) {
+    if !output::wants_json(json) {
+        ui::info("Legacy v1 results (frozen upstream). Drop --legacy for the full v2 report.");
+    }
     let body = ui::with_spinner(&format!("Fetching results for {domain}"), || {
         fetch(client.get(&format!(
             "/scan/domain/results?domain={}",

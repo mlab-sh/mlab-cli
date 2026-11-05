@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod config;
 pub mod cve;
+pub mod domain_report;
 pub mod limits;
 pub mod login;
 pub mod lookup;

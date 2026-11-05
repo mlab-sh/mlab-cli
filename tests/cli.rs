@@ -248,10 +248,43 @@ const DOMAIN_RESULTS: &str = r#"{
     "files":{"security_txt":"","robots_txt":"User-agent: *"}
   }}"#;
 
+/// A v2 report, `schema: "domain-report/2"`, with findings out of order so the
+/// sort by severity is visible.
+const DOMAIN_REPORT: &str = r#"{
+  "schema":"domain-report/2","domain":"example.com","status":"completed",
+  "scan_date":"2026-11-05 09:00:00","score":{"value":72,"grade":"C"},
+  "findings":[
+    {"severity":"low","title":"No BIMI record","section":"mail","block":"mail-bimi"},
+    {"severity":"critical","title":"Subdomain takeover on old.example.com","section":"subdomains","block":"sub-takeover"},
+    {"severity":"medium","title":"DMARC policy is none","section":"mail","block":"mail-dmarc"}
+  ],
+  "registration":{"found":true,"registrar":"Example Registrar","created":"1995-08-14","age_days":11000,
+                  "expires":"2027-08-13","expires_in_days":281,"nameservers":["a.iana-servers.net"]},
+  "dns":{"records":{"mx":[{"priority":10,"exchange":"mx.example.com"}],"ns":["a.iana-servers.net"],"caa":[]},
+         "dnssec":{"status":"secure"},"caa":null,"txt":{"saas":[{"service":"Microsoft 365"}]},"dangling":{}},
+  "mail":{"grade":"B","spf":{"present":true,"record":"v=spf1 -all"},"dmarc":{"present":true,"policy":"none"},
+          "dkim":[{"selector":"selector1","present":true}],"bimi":{"present":false},"tls_rpt":{"present":false}},
+  "web":{"http":{"reachable":true,"status":200,"final_url":"https://example.com/","server":"nginx",
+                 "https_upgrade":true,"missing_security_headers":["content-security-policy"]},
+         "tls":{"reachable":true,"protocol":"TLSv1.3","cert":{"issuer":"DigiCert","valid_to":"2027-01-01"},"days_remaining":57},
+         "cve":{"total_cves":2,"kev_count":1,"max_cvss":9.8}},
+  "certificates":{"history":{"cert_count":40,"currently_valid_count":3,"expired_count":37,"ca_count":2},"list":[]},
+  "surface":{"subdomains":["www.example.com","api.example.com"],
+             "suspicious":[{"keyword":"admin","subdomain":"admin.example.com"}],
+             "web":{"checked":2,"reachable":2,"technologies":[{"name":"nginx","version":"1.25.3"}]},
+             "takeover":{"candidates":[{"subdomain":"old.example.com","vulnerable":true}]},
+             "typosquat":{"registered":[{"domain":"examp1e.com"}]}}
+}"#;
+
 fn domain_server(status_body: &'static str) -> TestServer {
+    domain_server_with(status_body, DOMAIN_REPORT)
+}
+
+fn domain_server_with(status_body: &'static str, report: &'static str) -> TestServer {
     TestServer::start(move |req| match (req.method.as_str(), req.route_path()) {
         ("POST", "/api/v1/scan/domain") => json(r#"{"status":"success"}"#),
         ("GET", "/api/v1/scan/domain/status") => json(status_body),
+        ("GET", "/api/v1/scan/domain/report") => json(report),
         ("GET", "/api/v1/scan/domain/results") => json(DOMAIN_RESULTS),
         _ => not_found(),
     })
@@ -266,12 +299,78 @@ fn domain_scan_follows_to_completion_and_renders_the_report() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let rendered = stdout(&out);
-    assert!(
-        rendered.contains("Domain Scan Results"),
-        "stdout: {rendered}"
-    );
+    assert!(rendered.contains("Domain Report"), "stdout: {rendered}");
+    assert!(rendered.contains("72/100"), "stdout: {rendered}");
+    for section in ["Findings (3)", "Registration", "DNS", "Mail", "Web", "Certificates", "Attack surface"] {
+        assert!(rendered.contains(section), "missing {section}: {rendered}");
+    }
     assert!(rendered.contains("www.example.com"));
     assert!(rendered.contains("admin.example.com"));
+    // Worst first, whatever order the server sent them in.
+    let at = |t: &str| rendered.find(t).unwrap_or_else(|| panic!("{t} missing"));
+    assert!(at("Subdomain takeover") < at("DMARC policy is none"));
+    assert!(at("DMARC policy is none") < at("No BIMI record"));
+    assert!(server.requests().iter().any(|r| r.route_path() == "/api/v1/scan/domain/report"));
+    assert!(!server.routes().iter().any(|r| r.contains("/scan/domain/results")));
+}
+
+#[test]
+fn domain_scan_errors_when_the_report_says_failed() {
+    // The status route answers "success" for failed scans too: only the
+    // report's own status tells them apart.
+    let server = domain_server_with(
+        r#"{"status":"success"}"#,
+        r#"{"schema":"domain-report/2","domain":"example.com","status":"failed","score":null,"findings":[]}"#,
+    );
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "domain", "example.com"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_ERROR), "stdout: {}", stdout(&out));
+    assert!(stderr(&out).contains("failed"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn a_failed_report_still_prints_its_json_but_exits_non_zero() {
+    let server = domain_server_with(
+        r#"{"status":"success"}"#,
+        r#"{"schema":"domain-report/2","domain":"example.com","status":"failed","score":null,"findings":[]}"#,
+    );
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "domain", "example.com", "--json"]);
+
+    assert_eq!(out.status.code(), Some(EXIT_ERROR));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    assert_eq!(parsed["status"], "failed");
+}
+
+#[test]
+fn a_partial_report_renders_with_a_warning() {
+    let server = domain_server_with(
+        r#"{"status":"success"}"#,
+        r#"{"schema":"domain-report/2","domain":"example.com","status":"partial","score":{"value":90,"grade":"A"},"findings":[]}"#,
+    );
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "domain", "example.com"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).contains("Partial scan"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn legacy_reads_the_frozen_v1_results() {
+    let server = domain_server(r#"{"status":"success"}"#);
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["scan", "domain", "example.com", "--legacy"]);
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains("Domain Scan Results"));
+    assert!(stderr(&out).contains("Legacy v1"), "stderr: {}", stderr(&out));
+    assert!(server.requests().iter().any(|r| r.route_path() == "/api/v1/scan/domain/results"));
+    assert!(!server.routes().iter().any(|r| r.contains("/scan/domain/report")));
 }
 
 #[test]
@@ -360,7 +459,7 @@ fn results_warn_when_a_completed_scan_carries_no_data() {
     });
     let home = TempHome::new(&server.url);
 
-    let out = mlab(&home, &["results", "domain", "example.com"]);
+    let out = mlab(&home, &["results", "domain", "example.com", "--legacy"]);
 
     assert!(
         stderr(&out).contains("Empty report"),
@@ -370,20 +469,35 @@ fn results_warn_when_a_completed_scan_carries_no_data() {
 }
 
 #[test]
-fn results_json_passes_the_payload_through_untouched() {
-    let server = TestServer::start(|_| json(DOMAIN_RESULTS));
+fn results_json_passes_the_v2_report_through_untouched() {
+    let server = TestServer::start(|_| json(DOMAIN_REPORT));
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["results", "domain", "example.com", "--json"]);
 
     assert!(out.status.success());
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
+    assert_eq!(parsed["schema"], "domain-report/2");
+    assert_eq!(parsed["surface"]["subdomains"][0], "www.example.com");
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/report");
+}
+
+#[test]
+fn legacy_results_json_passes_the_v1_payload_through_untouched() {
+    let server = TestServer::start(|_| json(DOMAIN_RESULTS));
+    let home = TempHome::new(&server.url);
+
+    let out = mlab(&home, &["results", "domain", "example.com", "--legacy", "--json"]);
+
+    assert!(out.status.success());
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
     assert_eq!(parsed["results"]["subdomains"][0], "www.example.com");
+    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/results");
 }
 
 #[test]
 fn results_json_is_accepted_before_the_sub_command_too() {
-    let server = TestServer::start(|_| json(DOMAIN_RESULTS));
+    let server = TestServer::start(|_| json(DOMAIN_REPORT));
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["results", "--json", "domain", "example.com"]);
@@ -699,7 +813,7 @@ fn a_long_rate_limit_is_reported_as_a_quota_problem() {
 
 #[test]
 fn values_are_escaped_before_they_reach_the_query_string() {
-    let server = TestServer::start(|_| json(DOMAIN_RESULTS));
+    let server = TestServer::start(|_| json(DOMAIN_REPORT));
     let home = TempHome::new(&server.url);
 
     mlab(&home, &["results", "domain", "evil.com&domain=other.com"]);
@@ -811,7 +925,7 @@ fn the_domain_report_shows_the_certificates_it_already_received() {
     });
     let home = TempHome::new(&server.url);
 
-    let out = mlab(&home, &["results", "domain", "example.com"]);
+    let out = mlab(&home, &["results", "domain", "example.com", "--legacy"]);
 
     let rendered = stdout(&out);
     assert!(rendered.contains("SSL Certificates"), "stdout: {rendered}");
@@ -3039,7 +3153,7 @@ fn search_routes_each_shape_to_the_endpoint_that_owns_it() {
 #[test]
 fn searching_a_domain_reads_the_report_instead_of_launching_a_scan() {
     // A scan costs quota and takes minutes; `search` must never start one.
-    let server = TestServer::start(|_| json(DOMAIN_RESULTS));
+    let server = TestServer::start(|_| json(DOMAIN_REPORT));
     let home = TempHome::new(&server.url);
 
     let out = mlab(&home, &["search", "example.com"]);
@@ -3047,7 +3161,7 @@ fn searching_a_domain_reads_the_report_instead_of_launching_a_scan() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert_eq!(
         server.requests()[0].route_path(),
-        "/api/v1/scan/domain/results"
+        "/api/v1/scan/domain/report"
     );
     assert!(
         server.requests().iter().all(|r| r.method == "GET"),

@@ -8,7 +8,7 @@ The cheap sub-commands that live under the same verb — `url`, `hash`, `email`,
 
 | Sub-command | Endpoint | What it does |
 | --- | --- | --- |
-| `scan domain <domain>` | `POST /api/v1/scan/domain` | Launch a full domain scan, follow it, render the report |
+| `scan domain <domain>` | `POST /api/v1/scan/domain` | Launch a full domain scan, follow it, render the v2 report |
 | `scan ip <ip>` | `GET /api/v1/scan/ip` | Geo, ASN and threat intel for an IPv4 or IPv6 address |
 | `scan file <path>` | `POST /upload/file` | Upload a file (≤ 10 MB) and print the sha256 to poll |
 | `scan crypto <address…>` | `GET`/`POST /api/v1/scan/crypto` | Threat intel for one or more blockchain addresses |
@@ -19,10 +19,12 @@ The cheap sub-commands that live under the same verb — `url`, `hash`, `email`,
 mlab scan domain example.com
 mlab scan domain example.com --no-follow
 mlab scan domain example.com --json > report.json
+mlab scan domain example.com --legacy
 ```
 
-Launches the scan, then follows it to completion and prints the report — the
-whole thing in one command. Progress goes to stderr, so `--json` still gives a
+Launches the scan, then follows it to completion and prints the v2 report
+(`GET /api/v1/scan/domain/report`, described on [Results](Results)) — the
+whole thing in one command. `--legacy` prints the frozen v1 results instead. Progress goes to stderr, so `--json` still gives a
 clean stream on stdout.
 
 ```
@@ -45,7 +47,8 @@ ok: Scan launched for example.com
   two hundred times.
 - **A failure stops it.** A terminal failure reported by the API ends the
   command; without that the loop would spin until the timeout on a scan that
-  is already dead.
+  is already dead. The status route answers `success` for a failed scan too,
+  so the report's own `status` is checked as well: `failed` exits `1`.
 - **A blip does not.** Transient polling errors are tolerated for a few
   consecutive attempts before the command gives up on them.
 

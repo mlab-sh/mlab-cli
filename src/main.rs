@@ -252,6 +252,10 @@ enum ScanTarget {
         #[arg(long)]
         no_follow: bool,
 
+        /// Show the legacy v1 results (frozen upstream) instead of the v2 report
+        #[arg(long)]
+        legacy: bool,
+
         /// Output raw JSON
         #[arg(long)]
         json: bool,
@@ -659,10 +663,14 @@ enum StatusTarget {
 
 #[derive(Subcommand)]
 enum ResultsTarget {
-    /// Get domain scan results
+    /// Get the domain scan report (v2)
     Domain {
-        /// Domain to get results for
+        /// Domain to get the report for
         domain: String,
+
+        /// Show the legacy v1 results (frozen upstream) instead of the v2 report
+        #[arg(long)]
+        legacy: bool,
     },
     /// Get file scan results
     File {
@@ -843,8 +851,9 @@ fn main() {
                 ScanTarget::Domain {
                     domain,
                     no_follow,
+                    legacy,
                     json,
-                } => commands::scan::domain(&client, domain, *no_follow, *json),
+                } => commands::scan::domain(&client, domain, *no_follow, *legacy, *json),
                 ScanTarget::Ip { ip, json } => commands::scan::ip(&client, ip, *json),
                 ScanTarget::File { path, follow, json } => {
                     commands::scan::file(&client, path, *follow, *json)
@@ -875,8 +884,8 @@ fn main() {
         Commands::Results { target, json } => {
             let client = make_client(&cli);
             match target {
-                ResultsTarget::Domain { domain } => {
-                    commands::results::domain(&client, domain, *json)
+                ResultsTarget::Domain { domain, legacy } => {
+                    commands::results::domain(&client, domain, *legacy, *json)
                 }
                 ResultsTarget::File { sha256, tool } => {
                     commands::results::file(&client, sha256, tool.as_deref(), *json)

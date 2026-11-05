@@ -57,7 +57,7 @@ mlab actor get apt28
 | [`scan`](https://github.com/mlab-sh/mlab-cli/wiki/Scan) | Launch a metered scan: a domain, an IP, a file, a crypto address |
 | [`scan url` … `bash`](https://github.com/mlab-sh/mlab-cli/wiki/Lookups) | The cheap lookups: URL, hash, email, phone, MAC, shell script |
 | [`status`](https://github.com/mlab-sh/mlab-cli/wiki/Status) | Where a running domain scan has got to |
-| [`results`](https://github.com/mlab-sh/mlab-cli/wiki/Results) | Fetch a finished domain or file report |
+| [`results`](https://github.com/mlab-sh/mlab-cli/wiki/Results) | Fetch a finished domain report (v2, `--legacy` for v1) or file report |
 | [`ssl`](https://github.com/mlab-sh/mlab-cli/wiki/Ssl) | The certificates a previous scan collected for a domain |
 | [`ioc`](https://github.com/mlab-sh/mlab-cli/wiki/Ioc) | Pull indicators out of an email, a log or a report |
 | [`network`](https://github.com/mlab-sh/mlab-cli/wiki/Network) | Every request a page makes, captured in an instrumented browser |

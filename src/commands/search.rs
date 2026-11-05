@@ -105,7 +105,7 @@ pub fn run(client: &MlabClient, vuln: &HostClient, query: &str, json: bool) {
         Target::Phone => crate::commands::lookup::phone(client, value, json),
         // Deliberately the read side: searching must never start a scan.
         Target::Domain => {
-            crate::commands::results::domain(client, value, json);
+            crate::commands::results::domain(client, value, false, json);
         }
         Target::Unknown => unreachable!("handled above"),
     }
