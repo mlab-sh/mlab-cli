@@ -301,7 +301,15 @@ fn domain_scan_follows_to_completion_and_renders_the_report() {
     let rendered = stdout(&out);
     assert!(rendered.contains("Domain Report"), "stdout: {rendered}");
     assert!(rendered.contains("72/100"), "stdout: {rendered}");
-    for section in ["Findings (3)", "Registration", "DNS", "Mail", "Web", "Certificates", "Attack surface"] {
+    for section in [
+        "Findings (3)",
+        "Registration",
+        "DNS",
+        "Mail",
+        "Web",
+        "Certificates",
+        "Attack surface",
+    ] {
         assert!(rendered.contains(section), "missing {section}: {rendered}");
     }
     assert!(rendered.contains("www.example.com"));
@@ -310,8 +318,14 @@ fn domain_scan_follows_to_completion_and_renders_the_report() {
     let at = |t: &str| rendered.find(t).unwrap_or_else(|| panic!("{t} missing"));
     assert!(at("Subdomain takeover") < at("DMARC policy is none"));
     assert!(at("DMARC policy is none") < at("No BIMI record"));
-    assert!(server.requests().iter().any(|r| r.route_path() == "/api/v1/scan/domain/report"));
-    assert!(!server.routes().iter().any(|r| r.contains("/scan/domain/results")));
+    assert!(server
+        .requests()
+        .iter()
+        .any(|r| r.route_path() == "/api/v1/scan/domain/report"));
+    assert!(!server
+        .routes()
+        .iter()
+        .any(|r| r.contains("/scan/domain/results")));
 }
 
 #[test]
@@ -326,7 +340,12 @@ fn domain_scan_errors_when_the_report_says_failed() {
 
     let out = mlab(&home, &["scan", "domain", "example.com"]);
 
-    assert_eq!(out.status.code(), Some(EXIT_ERROR), "stdout: {}", stdout(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_ERROR),
+        "stdout: {}",
+        stdout(&out)
+    );
     assert!(stderr(&out).contains("failed"), "stderr: {}", stderr(&out));
 }
 
@@ -356,7 +375,11 @@ fn a_partial_report_renders_with_a_warning() {
     let out = mlab(&home, &["results", "domain", "example.com"]);
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
-    assert!(stderr(&out).contains("Partial scan"), "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("Partial scan"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -368,9 +391,19 @@ fn legacy_reads_the_frozen_v1_results() {
 
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     assert!(stdout(&out).contains("Domain Scan Results"));
-    assert!(stderr(&out).contains("Legacy v1"), "stderr: {}", stderr(&out));
-    assert!(server.requests().iter().any(|r| r.route_path() == "/api/v1/scan/domain/results"));
-    assert!(!server.routes().iter().any(|r| r.contains("/scan/domain/report")));
+    assert!(
+        stderr(&out).contains("Legacy v1"),
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(server
+        .requests()
+        .iter()
+        .any(|r| r.route_path() == "/api/v1/scan/domain/results"));
+    assert!(!server
+        .routes()
+        .iter()
+        .any(|r| r.contains("/scan/domain/report")));
 }
 
 #[test]
@@ -479,7 +512,10 @@ fn results_json_passes_the_v2_report_through_untouched() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
     assert_eq!(parsed["schema"], "domain-report/2");
     assert_eq!(parsed["surface"]["subdomains"][0], "www.example.com");
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/report");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/scan/domain/report"
+    );
 }
 
 #[test]
@@ -487,12 +523,18 @@ fn legacy_results_json_passes_the_v1_payload_through_untouched() {
     let server = TestServer::start(|_| json(DOMAIN_RESULTS));
     let home = TempHome::new(&server.url);
 
-    let out = mlab(&home, &["results", "domain", "example.com", "--legacy", "--json"]);
+    let out = mlab(
+        &home,
+        &["results", "domain", "example.com", "--legacy", "--json"],
+    );
 
     assert!(out.status.success());
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid json");
     assert_eq!(parsed["results"]["subdomains"][0], "www.example.com");
-    assert_eq!(server.requests()[0].route_path(), "/api/v1/scan/domain/results");
+    assert_eq!(
+        server.requests()[0].route_path(),
+        "/api/v1/scan/domain/results"
+    );
 }
 
 #[test]
